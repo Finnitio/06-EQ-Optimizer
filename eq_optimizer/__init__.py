@@ -9,6 +9,7 @@ from .measurements import (
     estimate_minimum_phase_response,
     load_frd,
     resample_response,
+    write_frd,
 )
 from .plotting import plot_sum_vs_reference, plot_ways
 
@@ -22,6 +23,7 @@ __all__ = [
     "load_frd",
     "build_common_grid",
     "resample_response",
+    "write_frd",
     "estimate_minimum_phase_response",
     "plot_ways",
     "plot_sum_vs_reference",

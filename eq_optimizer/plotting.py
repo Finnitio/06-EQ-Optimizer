@@ -169,8 +169,8 @@ def plot_sum_vs_reference(
     if y_max <= y_min:
         y_max = y_min + 10.0
     ax_mag.set_ylim(y_min, y_max)
-    ax_mag.yaxis.set_major_locator(MultipleLocator(5))
-    ax_mag.yaxis.set_minor_locator(MultipleLocator(1))
+    ax_mag.yaxis.set_major_locator(MultipleLocator(1))
+    ax_mag.yaxis.set_minor_locator(MultipleLocator(0.5))
 
     def _wrap_phase(rad: np.ndarray) -> np.ndarray:
         deg = np.degrees(rad)

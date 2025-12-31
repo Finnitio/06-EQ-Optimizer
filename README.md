@@ -30,6 +30,7 @@ This repo currently contains the TT/MT/HT measurement files (`input/*.frd`), a d
 | `--peq-sweep FILE`, `--allpass-sweep FILE`, `--shelf-sweep FILE` | Override the sweep filenames relative to `--input-dir` when using `--add-manufacturer`. |
 | `--test` | Generate `test.png` that compares the summed response against the VituixFR measurement (see below) instead of the default multi-way plot. |
 | `--vituix-file FILE` | Use an alternate FRD file for `--test` (defaults to `input/VituixFR.txt`). |
+| `--export-sum FILE` | Write the summed response to an FRD file (full grid by default, trimmed to 20–20 kHz when used with `--test`). |
 
 ## Config file structure (`project.json`)
 The default `project.json` already matches the TT/MT/HT files in `input/`. Adjust it as needed:
@@ -96,6 +97,7 @@ Relative paths inside `ways[].file` are resolved against the config file’s dir
 ### Test comparison mode
 - Run `python main.py --test` once you have placed `VituixFR.txt` (standard FRD columns) in the `input/` folder. The command loads the configured project, sums all filtered ways, resamples the Vituix measurement to the shared frequency grid, trims both traces to 20 Hz–20 kHz, and writes `output/<project_name>/test.png`.
 - The figure overlays the magnitude traces of the summed response and the Vituix measurement, centers the vertical scale around the average magnitude of both curves (±5 dB), and shows a paired phase plot where both traces are wrapped to ±180°. Pass `--vituix-file some/other.frd` to compare against a different reference sweep and `--no-show` when you only need the PNG file.
+- Add `--export-sum output/<project_name>/sum.frd` when you want the same trimmed summed response (20–20 kHz) written as an FRD file for comparison inside VituixCAD or other tools. Without `--test`, the export covers the full interpolation grid.
 
 ### Filters array (per way)
 - `type`: one of `butterworth`, `linkwitz-riley`/`lr`, `peq`, `shelf`, or `phase` (all-pass).

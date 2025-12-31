@@ -52,6 +52,26 @@ def load_frd(path: Path) -> Response:
     return Response(frequency=freq_arr, magnitude_db=mag_arr, phase_rad=phase_rad_arr)
 
 
+def write_frd(response: Response, path: Path, include_header: bool = True) -> None:
+    """Persist a response as frequency/magnitude/phase triplets in FRD format."""
+    freq = np.asarray(response.frequency)
+    mag = np.asarray(response.magnitude_db)
+    phase_deg = np.degrees(np.asarray(response.phase_rad))
+    if freq.shape != mag.shape or freq.shape != phase_deg.shape:
+        raise ValueError("Response arrays must share the same shape before exporting to FRD")
+
+    destination = Path(path)
+    if destination.parent:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+
+    header = "* Frequency[Hz]\tMagnitude[dB]\tPhase[deg]\n"
+    with destination.open("w", encoding="ascii") as handle:
+        if include_header:
+            handle.write(header)
+        for f_val, mag_db, phase in zip(freq, mag, phase_deg):
+            handle.write(f"{f_val:.6f}\t{mag_db:.6f}\t{phase:.6f}\n")
+
+
 def build_common_grid(responses: Sequence[Response], points: int = 2000) -> np.ndarray:
     min_freqs = [resp.frequency.min() for resp in responses]
     max_freqs = [resp.frequency.max() for resp in responses]

@@ -17,6 +17,7 @@ from eq_optimizer import (
     plot_sum_vs_reference,
     plot_ways,
     resample_response,
+    write_frd,
 )
 from eq_optimizer.manufacturer_calibration import (
     calibrate_manufacturer_profile,
@@ -89,6 +90,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=Path("VituixFR.txt"),
         help="Path to the Vituix FRD file (relative to --input-dir when not absolute) used with --test.",
     )
+    parser.add_argument(
+        "--export-sum",
+        type=Path,
+        default=None,
+        help="Optional FRD file path to write the summed response for external comparison.",
+    )
     return parser.parse_args(argv)
 
 
@@ -102,6 +109,10 @@ def run_cli(argv: list[str] | None = None) -> None:
         return
     project, metadata = build_project(args)
     responses, freq_grid = project.resampled_responses(points=args.points)
+    if args.export_sum is not None:
+        summed = build_sum_response(responses)
+        write_frd(summed, args.export_sum)
+        print(f"Exported summed response to {args.export_sum}")
     save_path = args.save or derive_default_output_path(project_name=metadata["name"])
     plot_ways(project.ways, responses, freq_grid, save_path, show_plot=not args.no_show)
 
@@ -140,6 +151,9 @@ def run_test_mode(args: argparse.Namespace) -> None:
 
     trimmed_sum, trimmed_reference = trim_frequency_window(sum_response, reference, 20.0, 20_000.0)
     project_output_path = derive_default_output_path(metadata["name"]).with_name("test.png")
+    if args.export_sum is not None:
+        write_frd(trimmed_sum, args.export_sum)
+        print(f"Exported trimmed summed response (20-20 kHz) to {args.export_sum}")
 
     plot_sum_vs_reference(trimmed_sum, trimmed_reference, save_path=project_output_path, show_plot=not args.no_show)
 
