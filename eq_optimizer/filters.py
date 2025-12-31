@@ -6,6 +6,7 @@ import numpy as np
 from scipy import signal
 
 from .measurements import Response, compute_complex
+from .manufacturers import ManufacturerProfile
 
 
 @dataclass
@@ -22,7 +23,12 @@ class FilterBlock:
         return cls(kind=kind, params=params)
 
 
-def apply_filter_chain(response: Response, filters: Iterable[FilterBlock], sample_rate: float) -> Response:
+def apply_filter_chain(
+    response: Response,
+    filters: Iterable[FilterBlock],
+    sample_rate: float,
+    manufacturer: ManufacturerProfile | None = None,
+) -> Response:
     filters_list = list(filters)
     if not filters_list:
         return response
@@ -31,7 +37,7 @@ def apply_filter_chain(response: Response, filters: Iterable[FilterBlock], sampl
     complex_resp = compute_complex(response)
 
     for block in filters_list:
-        h = design_filter_response(block, freq, sample_rate)
+        h = design_filter_response(block, freq, sample_rate, manufacturer)
         complex_resp *= h
 
     magnitude_db = 20.0 * np.log10(np.maximum(np.abs(complex_resp), 1e-12))
@@ -39,9 +45,17 @@ def apply_filter_chain(response: Response, filters: Iterable[FilterBlock], sampl
     return Response(frequency=freq, magnitude_db=magnitude_db, phase_rad=phase_rad)
 
 
-def design_filter_response(block: FilterBlock, freq_hz: np.ndarray, sample_rate: float) -> np.ndarray:
+def design_filter_response(
+    block: FilterBlock,
+    freq_hz: np.ndarray,
+    sample_rate: float,
+    manufacturer: ManufacturerProfile | None = None,
+) -> np.ndarray:
     kind = block.kind
-    params = block.params
+    params = _merge_params(block, manufacturer)
+
+    if not bool(params.get("enabled", True)):
+        return np.ones_like(freq_hz, dtype=np.complex128)
 
     if kind == "butterworth":
         return _design_butterworth(params, freq_hz, sample_rate)
@@ -59,6 +73,14 @@ def design_filter_response(block: FilterBlock, freq_hz: np.ndarray, sample_rate:
         return _design_delay(params, freq_hz)
 
     raise ValueError(f"Unsupported filter type: {kind}")
+
+
+def _merge_params(block: FilterBlock, manufacturer: ManufacturerProfile | None) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    if manufacturer is not None:
+        merged.update(manufacturer.settings_for(block.kind))
+    merged.update(block.params)
+    return merged
 
 
 def _design_butterworth(params: dict[str, Any], freq_hz: np.ndarray, sample_rate: float) -> np.ndarray:
@@ -83,8 +105,18 @@ def _design_linkwitz_riley(params: dict[str, Any], freq_hz: np.ndarray, sample_r
 
 def _design_peq(params: dict[str, Any], freq_hz: np.ndarray, sample_rate: float) -> np.ndarray:
     f0 = float(params.get("f0") or params.get("freq") or params.get("fc"))
-    q = float(params.get("q", 1.0))
+    f0 = f0 * float(params.get("freq_scale", 1.0)) + float(params.get("freq_offset_hz", params.get("freq_offset", 0.0)))
+    if f0 <= 0:
+        raise ValueError("Parametric EQ requires a positive center frequency")
+
+    q = float(params.get("q", 1.0)) * float(params.get("q_scale", 1.0))
+    q = _clamp(q, params.get("q_min"), params.get("q_max"))
     gain_db = float(params.get("gain_db", 0.0))
+    gain_db = gain_db * float(params.get("gain_scale", 1.0)) + float(params.get("gain_offset_db", 0.0))
+    gain_limit = params.get("gain_limit_db")
+    if gain_limit is not None:
+        limit = abs(float(gain_limit))
+        gain_db = _clamp(gain_db, -limit, limit)
     b, a = _biquad_peq(f0, q, gain_db, sample_rate)
     return _freq_response(b, a, freq_hz, sample_rate)
 
@@ -92,15 +124,29 @@ def _design_peq(params: dict[str, Any], freq_hz: np.ndarray, sample_rate: float)
 def _design_shelf(params: dict[str, Any], freq_hz: np.ndarray, sample_rate: float) -> np.ndarray:
     mode = params.get("mode", "low").lower()
     freq0 = float(params.get("freq") or params.get("f0") or params.get("fc"))
+    freq0 = freq0 * float(params.get("freq_scale", 1.0)) + float(params.get("freq_offset_hz", params.get("freq_offset", 0.0)))
+    if freq0 <= 0:
+        raise ValueError("Shelf filter requires a positive corner frequency")
+
     gain_db = float(params.get("gain_db", 0.0))
-    slope = float(params.get("slope", params.get("s", 1.0)))
+    gain_db = gain_db * float(params.get("gain_scale", 1.0)) + float(params.get("gain_offset_db", 0.0))
+    gain_limit = params.get("gain_limit_db")
+    if gain_limit is not None:
+        limit = abs(float(gain_limit))
+        gain_db = _clamp(gain_db, -limit, limit)
+    slope = float(params.get("slope", params.get("s", 1.0))) * float(params.get("slope_scale", 1.0))
+    slope = _clamp(slope, params.get("slope_min"), params.get("slope_max"))
     b, a = _biquad_shelf(freq0, gain_db, slope, sample_rate, mode)
     return _freq_response(b, a, freq_hz, sample_rate)
 
 
 def _design_allpass(params: dict[str, Any], freq_hz: np.ndarray, sample_rate: float) -> np.ndarray:
     freq0 = float(params.get("freq") or params.get("f0") or params.get("fc"))
-    q = float(params.get("q", 0.707))
+    freq0 = freq0 * float(params.get("freq_scale", 1.0)) + float(params.get("freq_offset_hz", params.get("freq_offset", 0.0)))
+    if freq0 <= 0:
+        raise ValueError("All-pass filter requires a positive center frequency")
+    q = float(params.get("q", 0.707)) * float(params.get("q_scale", 1.0))
+    q = _clamp(q, params.get("q_min"), params.get("q_max"))
     b, a = _biquad_allpass(freq0, q, sample_rate)
     return _freq_response(b, a, freq_hz, sample_rate)
 
@@ -117,7 +163,7 @@ def _design_delay(params: dict[str, Any], freq_hz: np.ndarray) -> np.ndarray:
     delay_us = params.get("delay_us") or params.get("us") or params.get("microseconds")
     if delay_us is None:
         raise ValueError("Delay filter requires 'delay_us'")
-    delay_s = float(delay_us) * 1e-6
+    delay_s = (float(delay_us) + float(params.get("delay_offset_us", 0.0))) * 1e-6
     phase = -2.0j * np.pi * freq_hz * delay_s
     return np.exp(phase)
 
@@ -219,3 +265,11 @@ def _biquad_allpass(f0: float, q: float, sample_rate: float) -> tuple[np.ndarray
     b = np.array([b0, b1, b2]) / a0
     a = np.array([1.0, a1 / a0, a2 / a0])
     return b, a
+
+
+def _clamp(value: float, min_value: Any | None, max_value: Any | None) -> float:
+    if min_value is not None:
+        value = max(value, float(min_value))
+    if max_value is not None:
+        value = min(value, float(max_value))
+    return value

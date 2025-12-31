@@ -1,0 +1,38 @@
+{
+  "manufacturers": [
+    {
+      "name": "generic",
+      "description": "Baseline RBJ cookbook biquads with no additional constraints.",
+      "filters": {
+        "peq": { "formula": "cookbook" },
+        "shelf": { "formula": "cookbook" },
+        "allpass": { "formula": "cookbook" }
+      }
+    },
+    {
+      "name": "minidsp",
+      "description": "MiniDSP-style presets with conservative gain/Q limits to mimic hardware behavior.",
+      "filters": {
+        "peq": {
+          "formula": "cookbook",
+          "q_min": 0.2,
+          "q_max": 20.0,
+          "q_scale": 0.98,
+          "gain_limit_db": 12.0
+        },
+        "shelf": {
+          "formula": "cookbook",
+          "gain_limit_db": 12.0,
+          "slope_scale": 0.9,
+          "slope_min": 0.1,
+          "slope_max": 2.0
+        },
+        "allpass": {
+          "q_scale": 0.95,
+          "q_min": 0.3,
+          "q_max": 10.0
+        }
+      }
+    }
+  ]
+}

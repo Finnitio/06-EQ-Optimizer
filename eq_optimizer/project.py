@@ -37,6 +37,7 @@ _NAMED_COLORS = {
 }
 
 from .filters import FilterBlock, apply_filter_chain
+from .manufacturers import ManufacturerProfile
 from .measurements import Response, build_common_grid, load_frd, resample_response
 
 
@@ -53,6 +54,7 @@ class Project:
     base_dir: Path = Path(".")
     sample_rate: float = 192000.0
     ways: List[Way] = field(default_factory=list)
+    manufacturer: ManufacturerProfile | None = None
 
     def add_way(
         self,
@@ -84,7 +86,12 @@ class Project:
         resampled: list[Response] = []
         for way, resp in zip(self.ways, responses):
             resampled_resp = resample_response(resp, freq_grid)
-            filtered = apply_filter_chain(resampled_resp, way.filters, self.sample_rate)
+            filtered = apply_filter_chain(
+                resampled_resp,
+                way.filters,
+                self.sample_rate,
+                manufacturer=self.manufacturer,
+            )
             resampled.append(filtered)
         return resampled, freq_grid
 

@@ -7,7 +7,7 @@ This repo currently contains the TT/MT/HT measurement files (`input/*.frd`), a d
    ```powershell
    python -m pip install -r requirements.txt
    ```
-2. Edit `project.json` if you need to point to different measurement files or rename/color the ways. The default file already references `input/TT.frd`, `input/MT.frd`, and `input/HT.frd` with the requested green/blue/yellow colors.
+2. Edit `project.json` if you need to point to different measurement files, rename/color the ways, or switch the `manufacturer` profile used for the biquad math. The default file already references `input/TT.frd`, `input/MT.frd`, and `input/HT.frd` with the requested green/blue/yellow colors.
 3. Generate the plot via the main entry point. By default the figure is saved under `output/<project_name>/plot.png` where `<project_name>` comes from the config (see below). Use `--save` only if you want to override that path. Example:
    ```powershell
    python main.py
@@ -24,6 +24,7 @@ This repo currently contains the TT/MT/HT measurement files (`input/*.frd`), a d
 | `--save PATH` | Override the auto-generated output path (`output/<project_name>/plot.png`). |
 | `--no-show` | Do not open the GUI window (useful for automated runs or remote sessions). |
 | `--points N` | Number of log-spaced frequency samples for interpolation (default: 2000). |
+| `--manufacturer-config PATH` | Path to the manufacturer profile file (defaults to `manufacturers.json` next to the project file or in the working directory). |
 
 ## Config file structure (`project.json`)
 The default `project.json` already matches the TT/MT/HT files in `input/`. Adjust it as needed:
@@ -32,10 +33,27 @@ The default `project.json` already matches the TT/MT/HT files in `input/`. Adjus
 {
    "name": "three_way_baseline",
    "sample_rate": 192000,
+   "manufacturer": "generic",
    "ways": [
       {
          "name": "TT",
          "file": "input/TT.frd",
+
+      ### Manufacturer profiles (`manufacturers.json`)
+      - The main config’s `manufacturer` field selects one of the profiles defined in `manufacturers.json` (either the copy next to the project file or the default at the repo root). When omitted it falls back to the built-in `generic` RBJ cookbook formulas.
+      - Each profile entry looks like this:
+        ```json
+        {
+           "name": "minidsp",
+           "description": "MiniDSP-style presets",
+           "filters": {
+              "peq": { "gain_limit_db": 12, "q_min": 0.2, "q_max": 20 },
+              "shelf": { "gain_limit_db": 12, "slope_scale": 0.9 },
+              "allpass": { "q_scale": 0.95 }
+           }
+        }
+        ```
+      - Filter-specific dictionaries are merged with each block’s parameters before designing the biquad. This makes it easy to enforce gain/Q limits, scale slopes, or tweak default formulas per manufacturer. Set `enabled: false` to globally bypass a filter type for a given profile.
          "color": "green",
          "filters": [
             { "type": "linkwitz-riley", "mode": "lowpass", "order": 4, "freq": 350 },

@@ -2,6 +2,7 @@
   "note": "Prefer editing project.json, which the app loads automatically.",
   "name": "sample_project",
   "sample_rate": 192000,
+  "manufacturer": "generic",
   "ways": [
     {
       "name": "TT",
