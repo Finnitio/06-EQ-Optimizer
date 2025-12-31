@@ -8,8 +8,16 @@
 			"file": "input/TT.frd",
 			"color": "green",
 			"filters": [
-				{ "type": "linkwitz-riley", "mode": "lowpass", "order": 4, "freq": 350 },
-				{ "type": "peq", "f0": 80, "gain_db": 3, "q": 1.2 }
+				{ "type": "gain", "gain_db": 0.0 },
+				{ "type": "delay", "delay_us": 0.0 },
+				{ "type": "butterworth", "mode": "highpass", "order": 4, "freq": 30 },
+				{ "type": "linkwitz-riley", "mode": "lowpass", "order": 4, "freq": 200 },
+				{ "type": "peq", "f0": 31.0, "gain_db": 9.4, "q": 2.12 },
+				{ "type": "peq", "f0": 55.0, "gain_db": -1.1, "q": 5.65 },
+				{ "type": "peq", "f0": 68.5, "gain_db": 2.6, "q": 5.51 },
+				{ "type": "peq", "f0": 98.2, "gain_db": -1.2, "q": 5.25 },
+				{ "type": "peq", "f0": 80.0, "gain_db": -0.2, "q": 4.82 },
+				{ "type": "peq", "f0": 115.0, "gain_db": 2.4, "q": 6.96 }
 			]
 		},
 		{
@@ -17,9 +25,15 @@
 			"file": "input/MT.frd",
 			"color": "blue",
 			"filters": [
-				{ "type": "linkwitz-riley", "mode": "highpass", "order": 4, "freq": 320 },
-				{ "type": "butterworth", "mode": "lowpass", "order": 4, "freq": 2500 },
-				{ "type": "shelf", "mode": "low", "freq": 400, "gain_db": -2, "slope": 0.7 }
+				{ "type": "gain", "gain_db": -15.6 },
+				{ "type": "delay", "delay_us": 1269 },
+				{ "type": "linkwitz-riley", "mode": "highpass", "order": 4, "freq": 112 },
+				{ "type": "linkwitz-riley", "mode": "lowpass", "order": 4, "freq": 930 },
+				{ "type": "peq", "f0": 231, "gain_db": 2.2, "q": 1.71 },
+				{ "type": "peq", "f0": 149, "gain_db": 9.1, "q": 3.1 },
+				{ "type": "peq", "f0": 544, "gain_db": -2.4, "q": 5.65 },
+				{ "type": "peq", "f0": 607, "gain_db": -1.5, "q": 10.0 },
+				{ "type": "peq", "f0": 690, "gain_db": 0.9, "q": 7.21 }
 			]
 		},
 		{
@@ -27,10 +41,19 @@
 			"file": "input/HT.frd",
 			"color": "red",
 			"filters": [
-				{ "type": "linkwitz-riley", "mode": "highpass", "order": 4, "freq": 2400 },
-				{ "type": "phase", "f0": 4500, "q": 0.8 },
-				{ "type": "gain", "gain_db": -1.5 },
-				{ "type": "delay", "delay_us": 120 }
+				{ "type": "gain", "gain_db": -19.8 },
+				{ "type": "delay", "delay_us": 640 },
+				{ "type": "linkwitz-riley", "mode": "highpass", "order": 4, "freq": 956 },
+				{ "type": "peq", "f0": 690, "gain_db": -9.1, "q": 3.71 },
+				{ "type": "peq", "f0": 1136, "gain_db": 6.5, "q": 3.22 },
+				{ "type": "peq", "f0": 3207, "gain_db": 0.8, "q": 1.0 },
+				{ "type": "peq", "f0": 3500, "gain_db": 0.5, "q": 6.0 },
+				{ "type": "peq", "f0": 4500, "gain_db": -0.5, "q": 8.0 },
+				{ "type": "peq", "f0": 5200, "gain_db": -4.1, "q": 3.0 },
+				{ "type": "peq", "f0": 6552, "gain_db": 3.6, "q": 3.31 },
+				{ "type": "peq", "f0": 11000, "gain_db": 2.3, "q": 8.0 },
+				{ "type": "peq", "f0": 12297, "gain_db": 2.9, "q": 9.01 },
+				{ "type": "peq", "f0": 12184, "gain_db": 0.0, "q": 1.49 }
 			]
 		}
 	]

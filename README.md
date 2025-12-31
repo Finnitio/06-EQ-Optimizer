@@ -25,6 +25,11 @@ This repo currently contains the TT/MT/HT measurement files (`input/*.frd`), a d
 | `--no-show` | Do not open the GUI window (useful for automated runs or remote sessions). |
 | `--points N` | Number of log-spaced frequency samples for interpolation (default: 2000). |
 | `--manufacturer-config PATH` | Path to the manufacturer profile file (defaults to `manufacturers.json` next to the project file or in the working directory). |
+| `--add-manufacturer NAME` / `-addmanufacturer NAME` | Fit a manufacturer profile from `peq.txt`, `allpass.txt`, and `lowshelf.txt` sweeps (second-order filters) and update the manufacturer config instead of plotting. |
+| `--calibration-sample-rate HZ` | Override the sample rate used while fitting the sweeps (paired with `--add-manufacturer`, default 192000 Hz). |
+| `--peq-sweep FILE`, `--allpass-sweep FILE`, `--shelf-sweep FILE` | Override the sweep filenames relative to `--input-dir` when using `--add-manufacturer`. |
+| `--test` | Generate `test.png` that compares the summed response against the VituixFR measurement (see below) instead of the default multi-way plot. |
+| `--vituix-file FILE` | Use an alternate FRD file for `--test` (defaults to `input/VituixFR.txt`). |
 
 ## Config file structure (`project.json`)
 The default `project.json` already matches the TT/MT/HT files in `input/`. Adjust it as needed:
@@ -83,6 +88,14 @@ The default `project.json` already matches the TT/MT/HT files in `input/`. Adjus
 ```
 
 Relative paths inside `ways[].file` are resolved against the config file’s directory. The optional `name` field drives the output folder naming (`output/<name>/plot.png`), and the optional `sample_rate` controls how digital filters are evaluated (defaults to 192 kHz so the 20 kHz band is well below Nyquist). The `color` field accepts either hex codes (e.g. `#1f77b4`) or the built-in English/German names (`blau`, `blue`, `grün`, `green`, `rot`, `red`, etc.); any unknown name raises a clear error at load time.
+
+### Calibrating manufacturer profiles
+- Run `python main.py --add-manufacturer hypex` to estimate scale factors for `peq`, `shelf`, and `allpass` filters from the measured sweeps located under `input/` (`peq.txt`, `allpass.txt`, and `lowshelf.txt` by default). All three sweeps must represent **second-order** sections configured for 3 dB, $Q = 0.707$, and $f = 1000$ Hz; this also covers both low and high shelves because the manufacturer profile scales the shared shelf block.
+- Use `--peq-sweep`, `--allpass-sweep`, or `--shelf-sweep` to point at alternative sweep filenames, and `--calibration-sample-rate` to match the DSP’s internal rate if it differs from the default 192 kHz. The command reuses `--manufacturer-config` to decide which JSON file should be updated (creating it when necessary) and overwrites existing entries with the same name.
+
+### Test comparison mode
+- Run `python main.py --test` once you have placed `VituixFR.txt` (standard FRD columns) in the `input/` folder. The command loads the configured project, sums all filtered ways, resamples the Vituix measurement to the shared frequency grid, trims both traces to 20 Hz–20 kHz, and writes `output/<project_name>/test.png`.
+- The figure overlays the magnitude traces of the summed response and the Vituix measurement, centers the vertical scale around the average magnitude of both curves (±5 dB), and shows a paired phase plot where both traces are wrapped to ±180°. Pass `--vituix-file some/other.frd` to compare against a different reference sweep and `--no-show` when you only need the PNG file.
 
 ### Filters array (per way)
 - `type`: one of `butterworth`, `linkwitz-riley`/`lr`, `peq`, `shelf`, or `phase` (all-pass).

@@ -160,7 +160,11 @@ def _design_gain(params: dict[str, Any], freq_hz: np.ndarray) -> np.ndarray:
 
 
 def _design_delay(params: dict[str, Any], freq_hz: np.ndarray) -> np.ndarray:
-    delay_us = params.get("delay_us") or params.get("us") or params.get("microseconds")
+    delay_us = params.get("delay_us")
+    if delay_us is None:
+        delay_us = params.get("us")
+    if delay_us is None:
+        delay_us = params.get("microseconds")
     if delay_us is None:
         raise ValueError("Delay filter requires 'delay_us'")
     delay_s = (float(delay_us) + float(params.get("delay_offset_us", 0.0))) * 1e-6

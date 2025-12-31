@@ -4,9 +4,15 @@
       "name": "generic",
       "description": "Baseline RBJ cookbook biquads with no additional constraints.",
       "filters": {
-        "peq": { "formula": "cookbook" },
-        "shelf": { "formula": "cookbook" },
-        "allpass": { "formula": "cookbook" }
+        "peq": {
+          "formula": "cookbook"
+        },
+        "shelf": {
+          "formula": "cookbook"
+        },
+        "allpass": {
+          "formula": "cookbook"
+        }
       }
     },
     {
@@ -31,6 +37,29 @@
           "q_scale": 0.95,
           "q_min": 0.3,
           "q_max": 10.0
+        }
+      }
+    },
+    {
+      "name": "hypex",
+      "description": "Auto-calibrated from 2nd-order PEQ/All-pass/Shelf sweeps (peq.txt, allpass.txt, lowshelf.txt) with 3.0 dB, Q=0.707, f=1000.0 Hz.",
+      "filters": {
+        "peq": {
+          "formula": "cookbook",
+          "freq_scale": 0.999449,
+          "gain_scale": 1.000102,
+          "q_scale": 0.843767
+        },
+        "allpass": {
+          "formula": "cookbook",
+          "freq_scale": 0.999293,
+          "q_scale": 1.003201
+        },
+        "shelf": {
+          "formula": "cookbook",
+          "freq_scale": 0.999301,
+          "gain_scale": 1.999571,
+          "slope_scale": 0.708586
         }
       }
     }

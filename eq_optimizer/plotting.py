@@ -141,3 +141,61 @@ def plot_ways(
         plt.show()
     else:
         plt.close()
+
+
+def plot_sum_vs_reference(
+    sum_response: Response,
+    reference_response: Response,
+    save_path: Path,
+    show_plot: bool = False,
+) -> None:
+    fig, (ax_mag, ax_phase) = plt.subplots(2, 1, figsize=(10, 7), sharex=True, height_ratios=[3, 1.5])
+
+    freq = sum_response.frequency
+    ref_freq = reference_response.frequency
+    if freq.shape != ref_freq.shape or np.any(freq != ref_freq):
+        raise ValueError("Sum and reference responses must share the same frequency grid")
+
+    ax_mag.semilogx(freq, sum_response.magnitude_db, label="Sum", color="#111111", linewidth=1.8)
+    ax_mag.semilogx(freq, reference_response.magnitude_db, label="Vituix FR", color="#d62728", linewidth=1.4)
+    ax_mag.set_ylabel("Magnitude [dB]")
+    ax_mag.grid(which="both", linestyle=":", linewidth=0.8, alpha=0.8)
+    ax_mag.legend(loc="best")
+
+    all_mag = np.concatenate([sum_response.magnitude_db, reference_response.magnitude_db])
+    avg_mag = float(np.mean(all_mag))
+    y_min = avg_mag - 5.0
+    y_max = avg_mag + 5.0
+    if y_max <= y_min:
+        y_max = y_min + 10.0
+    ax_mag.set_ylim(y_min, y_max)
+    ax_mag.yaxis.set_major_locator(MultipleLocator(5))
+    ax_mag.yaxis.set_minor_locator(MultipleLocator(1))
+
+    def _wrap_phase(rad: np.ndarray) -> np.ndarray:
+        deg = np.degrees(rad)
+        return ((deg + 180.0) % 360.0) - 180.0
+
+    ax_phase.semilogx(freq, _wrap_phase(sum_response.phase_rad), label="Sum phase", color="#111111", linewidth=1.5)
+    ax_phase.semilogx(freq, _wrap_phase(reference_response.phase_rad), label="Vituix phase", color="#d62728", linewidth=1.2)
+    ax_phase.set_ylabel("Phase [deg]")
+    ax_phase.set_xlabel("Frequency [Hz]")
+    ax_phase.set_ylim(-180, 180)
+    ax_phase.set_yticks(np.arange(-180, 181, 60))
+    ax_phase.grid(which="both", linestyle=":", linewidth=0.7, alpha=0.8)
+    ax_phase.legend(loc="best")
+
+    xmin = float(freq.min())
+    xmax = float(freq.max())
+    ax_mag.set_xlim(xmin, xmax)
+    ax_phase.set_xlim(xmin, xmax)
+
+    fig.tight_layout()
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(save_path, dpi=150)
+    print(f"Saved comparison plot to {save_path}")
+
+    if show_plot:
+        plt.show()
+    else:
+        plt.close()

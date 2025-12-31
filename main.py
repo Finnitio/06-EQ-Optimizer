@@ -5,13 +5,24 @@ import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from eq_optimizer import (
     FilterBlock,
     ManufacturerProfile,
     Project,
+    Response,
+    load_frd,
     load_manufacturer_profiles,
+    plot_sum_vs_reference,
     plot_ways,
+    resample_response,
 )
+from eq_optimizer.manufacturer_calibration import (
+    calibrate_manufacturer_profile,
+    persist_manufacturer_profile,
+)
+from eq_optimizer.measurements import compute_complex
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -35,15 +46,139 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Path to manufacturer biquad profiles; defaults to manufacturers.json next to the project config or in the working directory.",
     )
+    parser.add_argument(
+        "--add-manufacturer",
+        "-addmanufacturer",
+        dest="add_manufacturer",
+        type=str,
+        default=None,
+        help="Calibrate a manufacturer profile from peq/allpass/shelf sweeps instead of plotting a project.",
+    )
+    parser.add_argument(
+        "--calibration-sample-rate",
+        type=float,
+        default=192000.0,
+        help="Sample rate used when fitting calibration sweeps (only relevant with --add-manufacturer).",
+    )
+    parser.add_argument(
+        "--peq-sweep",
+        type=str,
+        default="peq.txt",
+        help="PEQ sweep filename relative to --input-dir when using --add-manufacturer.",
+    )
+    parser.add_argument(
+        "--allpass-sweep",
+        type=str,
+        default="allpass.txt",
+        help="All-pass sweep filename relative to --input-dir when using --add-manufacturer.",
+    )
+    parser.add_argument(
+        "--shelf-sweep",
+        type=str,
+        default="lowshelf.txt",
+        help="Low-shelf sweep filename relative to --input-dir when using --add-manufacturer.",
+    )
+    parser.add_argument(
+        "--test",
+        action="store_true",
+        help="Generate test.png comparing the summed response with the VituixFR measurement instead of the standard plot.",
+    )
+    parser.add_argument(
+        "--vituix-file",
+        type=Path,
+        default=Path("VituixFR.txt"),
+        help="Path to the Vituix FRD file (relative to --input-dir when not absolute) used with --test.",
+    )
     return parser.parse_args(argv)
 
 
 def run_cli(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    if args.add_manufacturer:
+        run_manufacturer_calibration(args)
+        return
+    if args.test:
+        run_test_mode(args)
+        return
     project, metadata = build_project(args)
     responses, freq_grid = project.resampled_responses(points=args.points)
     save_path = args.save or derive_default_output_path(project_name=metadata["name"])
     plot_ways(project.ways, responses, freq_grid, save_path, show_plot=not args.no_show)
+
+
+def run_manufacturer_calibration(args: argparse.Namespace) -> None:
+    config_path = determine_config_path(args.config)
+    manufacturer_config_path = determine_manufacturer_config_path(args.manufacturer_config, config_path)
+    if manufacturer_config_path is None:
+        manufacturer_config_path = Path("manufacturers.json")
+
+    profile = calibrate_manufacturer_profile(
+        name=args.add_manufacturer,
+        sweep_dir=args.input_dir.resolve(),
+        peq_file=args.peq_sweep,
+        allpass_file=args.allpass_sweep,
+        shelf_file=args.shelf_sweep,
+        sample_rate=float(args.calibration_sample_rate),
+    )
+    persist_manufacturer_profile(profile, manufacturer_config_path)
+    print(f"Stored manufacturer '{profile['name']}' in {manufacturer_config_path}")
+
+
+def run_test_mode(args: argparse.Namespace) -> None:
+    project, metadata = build_project(args)
+    responses, freq_grid = project.resampled_responses(points=args.points)
+    sum_response = build_sum_response(responses)
+
+    vituix_path = args.vituix_file
+    if not vituix_path.is_absolute():
+        vituix_path = (args.input_dir / vituix_path).resolve()
+    if not vituix_path.exists():
+        raise FileNotFoundError(f"Vituix FR file '{vituix_path}' does not exist")
+
+    vituix_response = load_frd(vituix_path)
+    reference = resample_response(vituix_response, sum_response.frequency)
+
+    trimmed_sum, trimmed_reference = trim_frequency_window(sum_response, reference, 20.0, 20_000.0)
+    project_output_path = derive_default_output_path(metadata["name"]).with_name("test.png")
+
+    plot_sum_vs_reference(trimmed_sum, trimmed_reference, save_path=project_output_path, show_plot=not args.no_show)
+
+
+def build_sum_response(responses: list[Response]) -> Response:
+    if not responses:
+        raise ValueError("At least one response is required to compute the sum")
+    freq = responses[0].frequency
+    summed = np.zeros(freq.shape, dtype=np.complex128)
+    for response in responses:
+        if not np.array_equal(response.frequency, freq):
+            raise ValueError("Responses must share the same frequency grid")
+        summed += compute_complex(response)
+    magnitude_db = 20.0 * np.log10(np.maximum(np.abs(summed), 1e-12))
+    phase_rad = np.unwrap(np.angle(summed))
+    return Response(frequency=freq, magnitude_db=magnitude_db, phase_rad=phase_rad)
+
+
+def trim_frequency_window(
+    sum_response: Response,
+    reference_response: Response,
+    fmin: float,
+    fmax: float,
+) -> tuple[Response, Response]:
+    freq = sum_response.frequency
+    if freq.shape != reference_response.frequency.shape or np.any(freq != reference_response.frequency):
+        raise ValueError("Responses must share identical frequency grids before trimming")
+    mask = (freq >= fmin) & (freq <= fmax)
+    if not np.any(mask):
+        raise ValueError("Frequency window does not overlap with response data")
+
+    def slice_response(resp: Response) -> Response:
+        return Response(
+            frequency=resp.frequency[mask],
+            magnitude_db=resp.magnitude_db[mask],
+            phase_rad=resp.phase_rad[mask],
+        )
+
+    return slice_response(sum_response), slice_response(reference_response)
 
 
 def build_project(args: argparse.Namespace) -> tuple[Project, dict[str, str]]:

@@ -10,7 +10,7 @@ from .measurements import (
     load_frd,
     resample_response,
 )
-from .plotting import plot_ways
+from .plotting import plot_sum_vs_reference, plot_ways
 
 __all__ = [
     "Project",
@@ -24,4 +24,5 @@ __all__ = [
     "resample_response",
     "estimate_minimum_phase_response",
     "plot_ways",
+    "plot_sum_vs_reference",
 ]
