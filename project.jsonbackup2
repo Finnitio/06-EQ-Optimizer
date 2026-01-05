@@ -1,0 +1,20 @@
+{
+  "name": "peq_verification",
+  "sample_rate": 192000,
+  "manufacturer": "hypex",
+  "ways": [
+    {
+      "name": "Flat",
+      "file": "input/flat.frd",
+      "color": "#1f77b4",
+      "filters": [
+        {
+          "type": "peq",
+          "f0": 1000,
+          "gain_db": 3,
+          "q": 0.707
+        }
+      ]
+    }
+  ]
+}
