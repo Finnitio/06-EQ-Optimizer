@@ -1,0 +1,25 @@
+{
+  "name": "Vibe v5",
+  "sample_rate": 192000,
+  "manufacturer": "generic",
+  "ways": [
+    {
+      "name": "TT",
+      "file": "input/TT.frd",
+      "color": "#2ca02c",
+      "filters": []
+    },
+    {
+      "name": "MT",
+      "file": "input/MT.frd",
+      "color": "#1f77b4",
+      "filters": []
+    },
+    {
+      "name": "HT",
+      "file": "input/HT.frd",
+      "color": "#ffbf00",
+      "filters": []
+    }
+  ]
+}

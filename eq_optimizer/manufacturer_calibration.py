@@ -34,6 +34,13 @@ class SweepFiles:
 
 
 @dataclass(slots=True)
+class LowpassSpec:
+    kind: str
+    file: str
+    order: int
+
+
+@dataclass(slots=True)
 class _ParameterSpec:
     name: str
     initial: float
@@ -48,15 +55,17 @@ def calibrate_manufacturer_profile(
     allpass_file: str,
     shelf_file: str,
     sample_rate: float,
+    lowpass_specs: Iterable[tuple[str, str, int]] | None = None,
     reference: ReferenceSettings | None = None,
 ) -> dict[str, Any]:
-    """Create a manufacturer entry by fitting three second-order sweeps."""
+    """Create a manufacturer entry by fitting sweeps for the supported filter blocks."""
 
     clean_name = name.strip()
     if not clean_name:
         raise ValueError("Manufacturer name must not be empty")
 
     ref = reference or ReferenceSettings()
+    normalized_lowpass = _normalize_lowpass_specs(lowpass_specs)
     sweeps = SweepFiles(
         peq=(sweep_dir / peq_file).resolve(),
         allpass=(sweep_dir / allpass_file).resolve(),
@@ -72,18 +81,32 @@ def calibrate_manufacturer_profile(
         "allpass": load_frd(sweeps.allpass),
         "shelf": load_frd(sweeps.shelf),
     }
+    lowpass_entries: list[tuple[LowpassSpec, Path, Response]] = []
+    for spec in normalized_lowpass:
+        candidate = (sweep_dir / spec.file).resolve()
+        if not candidate.exists():
+            raise FileNotFoundError(f"Missing low-pass calibration sweep: {candidate}")
+        response = load_frd(candidate)
+        lowpass_entries.append((spec, candidate, response))
 
     filters = {
         "peq": _calibrate_peq(responses["peq"], sample_rate, ref),
         "allpass": _calibrate_allpass(responses["allpass"], sample_rate, ref),
         "shelf": _calibrate_shelf(responses["shelf"], sample_rate, ref),
     }
+    for spec, _path, response in lowpass_entries:
+        filters[spec.kind] = _calibrate_lowpass(spec, response, sample_rate, ref)
 
     description = (
         "Auto-calibrated from 2nd-order PEQ/All-pass/Shelf sweeps "
         f"({sweeps.peq.name}, {sweeps.allpass.name}, {sweeps.shelf.name}) "
         f"with {ref.gain_db} dB, Q={ref.q}, f={ref.freq_hz} Hz."
     )
+    if lowpass_entries:
+        lp_desc = ", ".join(
+            f"{spec.kind} ({path.name}, order {spec.order})" for spec, path, _ in lowpass_entries
+        )
+        description += f" Low-pass sweeps: {lp_desc}."
 
     return {"name": clean_name, "description": description, "filters": filters}
 
@@ -180,6 +203,29 @@ def _calibrate_shelf(response: Response, sample_rate: float, reference: Referenc
     }
 
 
+def _calibrate_lowpass(
+    spec: LowpassSpec,
+    response: Response,
+    sample_rate: float,
+    reference: ReferenceSettings,
+) -> dict[str, float]:
+    bounds = _ParameterSpec("freq", reference.freq_hz, reference.freq_hz * 0.25, reference.freq_hz * 4.0)
+    result = _fit_section(
+        spec.kind,
+        response,
+        sample_rate,
+        specs=[bounds],
+        extra={"mode": "lowpass", "order": spec.order},
+        mag_weight=1.0,
+        phase_weight=0.05,
+    )
+    payload = {
+        "freq_scale": _scale(result["freq"], reference.freq_hz),
+        "reference_order": spec.order,
+    }
+    return payload
+
+
 def _fit_section(
     kind: str,
     response: Response,
@@ -228,3 +274,26 @@ def _scale(value: float, reference: float) -> float:
         return 1.0
     ratio = value / reference
     return float(np.round(ratio, 6))
+
+
+def _normalize_lowpass_specs(specs: Iterable[tuple[str, str, int]] | None) -> list[LowpassSpec]:
+    normalized: list[LowpassSpec] = []
+    if not specs:
+        return normalized
+    for item in specs:
+        if len(item) != 3:
+            raise ValueError("Low-pass sweep spec must be (kind, filename, order)")
+        kind, filename, order = item
+        kind_key = str(kind or "").strip().lower()
+        if kind_key not in {"butterworth", "linkwitz-riley"}:
+            raise ValueError(f"Unsupported low-pass filter kind '{kind}'")
+        file_key = str(filename or "").strip()
+        if not file_key:
+            raise ValueError("Low-pass sweep filename must not be empty")
+        order_value = int(order)
+        if order_value <= 0:
+            raise ValueError("Low-pass sweep order must be a positive integer")
+        if kind_key == "linkwitz-riley" and order_value % 2 != 0:
+            raise ValueError("Linkwitz-Riley sweeps require an even filter order")
+        normalized.append(LowpassSpec(kind=kind_key, file=file_key, order=order_value))
+    return normalized

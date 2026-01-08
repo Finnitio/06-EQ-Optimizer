@@ -13,7 +13,28 @@
         "allpass": {
           "formula": "cookbook"
         }
-      }
+      },
+      "blocks": [
+        {
+          "id": "template-peq",
+          "type": "peq",
+          "params": {
+            "f0": 1000.0,
+            "q": 0.707,
+            "gain_db": 3.0
+          }
+        },
+        {
+          "id": "template-shelf_low",
+          "type": "shelf",
+          "params": {
+            "mode": "low",
+            "freq": 1000.0,
+            "slope": 0.707,
+            "gain_db": 3.0
+          }
+        }
+      ]
     },
     {
       "name": "minidsp",
@@ -38,7 +59,18 @@
           "q_min": 0.3,
           "q_max": 10.0
         }
-      }
+      },
+      "blocks": [
+        {
+          "id": "template-peq",
+          "type": "peq",
+          "params": {
+            "f0": 1000.0,
+            "q": 0.707,
+            "gain_db": 3.0
+          }
+        }
+      ]
     },
     {
       "name": "hypex",
@@ -61,7 +93,128 @@
           "gain_scale": 1.999571,
           "slope_scale": 0.708586
         }
-      }
+      },
+      "blocks": [
+        {
+          "id": "b1e6b722939248a48db82f877b0b3f80",
+          "type": "peq",
+          "params": {
+            "f0": 1000.0,
+            "q": 0.707,
+            "gain_db": 3.0
+          }
+        },
+        {
+          "id": "5afef2715b0c40af9592f2ce1dcc0935",
+          "type": "peq",
+          "params": {
+            "f0": 1000.0,
+            "q": 1.0,
+            "gain_db": 0.0
+          }
+        },
+        {
+          "id": "da799fe143254291810b1fd90cbd8384",
+          "type": "shelf",
+          "params": {
+            "mode": "high",
+            "freq": 4000.0,
+            "gain_db": 0.0,
+            "slope": 0.7
+          }
+        },
+        {
+          "id": "4831e0f52e134b3b8968de857f90bc11",
+          "type": "shelf",
+          "params": {
+            "mode": "low",
+            "freq": 1000.0,
+            "slope": 0.707,
+            "gain_db": 3.0
+          }
+        },
+        {
+          "id": "176898cb234f4c0198c8ec741da4d306",
+          "type": "peq",
+          "params": {
+            "f0": 1000.0,
+            "q": 1.0,
+            "gain_db": 0.0
+          }
+        },
+        {
+          "id": "b8432dfbe4de44f892d373363ba20380",
+          "type": "peq",
+          "params": {
+            "f0": 1000.0,
+            "q": 1.0,
+            "gain_db": 0.0
+          }
+        },
+        {
+          "id": "885d67ee314b4410997c16c663a8277f",
+          "type": "peq",
+          "params": {
+            "f0": 1000.0,
+            "q": 0.7,
+            "gain_db": 3.0
+          }
+        },
+        {
+          "id": "d4264229447449f1a6d3f6aa61266886",
+          "type": "peq",
+          "params": {
+            "f0": 1000.0,
+            "q": 1.0,
+            "gain_db": 0.0
+          }
+        },
+        {
+          "id": "template-phase",
+          "type": "phase",
+          "params": {
+            "freq": 1000.0,
+            "q": 0.707
+          }
+        },
+        {
+          "id": "template-bw_low",
+          "type": "butterworth",
+          "params": {
+            "mode": "lowpass",
+            "freq": 1000.0,
+            "order": 4.0
+          }
+        },
+        {
+          "id": "template-lr_low",
+          "type": "linkwitz-riley",
+          "params": {
+            "mode": "lowpass",
+            "freq": 1000.0,
+            "order": 4.0
+          }
+        },
+        {
+          "id": "template-peq",
+          "type": "peq",
+          "params": {
+            "f0": 1000.0,
+            "q": 0.707,
+            "gain_db": 3.0
+          }
+        },
+        {
+          "id": "template-shelf_low",
+          "type": "shelf",
+          "params": {
+            "mode": "low",
+            "freq": 1000.0,
+            "slope": 0.707,
+            "gain_db": 3.0
+          }
+        }
+      ]
     }
   ]
 }

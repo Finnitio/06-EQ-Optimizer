@@ -1,7 +1,7 @@
 {
 	"name": "three_way_baseline",
 	"sample_rate": 192000,
-	"manufacturer": "generic",
+	"manufacturer": "hypex",
 	"ways": [
 		{
 			"name": "TT",

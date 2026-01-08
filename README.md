@@ -1,19 +1,35 @@
 # EQ Optimizer Scratchpad
 
-This repo currently contains the TT/MT/HT measurement files (`input/*.frd`), a default config file (`project.json`), and a helper script to visualize the three ways together with their summed response.
+This repo now ships with a GUI shell that manages EQ projects and a legacy CLI for the existing plotting and calibration workflows. The `input/*.frd` fixtures, default `project.json`, and plotting helpers are still available beneath the new application layer.
 
 ## Quick start
 1. Install Python 3.12 (or newer) and the dependencies:
    ```powershell
    python -m pip install -r requirements.txt
    ```
-2. Edit `project.json` if you need to point to different measurement files, rename/color the ways, or switch the `manufacturer` profile used for the biquad math. The default file already references `input/TT.frd`, `input/MT.frd`, and `input/HT.frd` with the requested green/blue/yellow colors.
-3. Generate the plot via the main entry point. By default the figure is saved under `output/<project_name>/plot.png` where `<project_name>` comes from the config (see below). Use `--save` only if you want to override that path. Example:
+2. Launch the GUI:
    ```powershell
    python main.py
    ```
+   The window opens with the **Project** tab so you can create/import/export/delete project configs. All managed projects are stored under `project_store/` (override via `--project-store`).
+3. Pick a project and continue with the planned workflow tabs as they are added. You can still hand-edit individual JSON files under `project_store/` or import existing configs at any time.
 
-`main.py` automatically loads `project.json` if it exists. You only need the `--tt-file`/`--mt-file`/`--ht-file` overrides when deliberately running without a config file. (`plot_three_way.py` still exists as a thin wrapper for backwards compatibility, but all new functionality lives in `main.py`.)
+`main.py` now launches the GUI by default. Pass `--cli` when you want to fall back to the command-line interface covered below.
+
+## Project tab (GUI)
+- Lists every managed project stored in `project_store/`
+- **New:** builds a copy of the default template (TT/MT/HT) and lists it immediately
+- **Import:** adds any `project.json`-style file into the catalog; the file contents are copied into the store so the originals stay untouched
+- **Export:** copies the selected project to a destination of your choice (use the `.eqproj` extension to keep things separate)
+- **Delete:** removes the selected project from the catalog and deletes its managed copy
+- Detail pane: shows metadata about the managed file; the JSON itself stays hidden because every setting will be editable within upcoming GUI tabs.
+
+## Filter tab (GUI)
+- **Manufacturer list:** mirrors `manufacturers.json`, with create/import/export/delete actions.
+- **Filter palette:** add PEQ, low shelves (high shelves reuse the same coefficients), phase blocks, and Butterworth/Linkwitz-Riley low-pass sections (6–48 dB/oct) directly into the selected manufacturer profile.
+- **Single filter per type:** each button activates one canonical block (default 1 kHz, $Q=0.707$, $A=3$ dB) so manufacturers stay aligned with the calibration assumptions.
+- **Parameter editor & preview:** tweak frequency, Q/slope, and gain below the live plot to see each block’s magnitude response instantly; when a calibration sweep (PEQ, all-pass, shelf, or low-pass) is linked, its FRD trace is shown automatically while the matching filter button is active.
+- **Calibration panel:** point to PEQ/all-pass/shelf sweeps (`.txt`/`.frd`) and optionally add dedicated low-pass sweeps (Butterworth & Linkwitz-Riley, order-selectable) before running the solver to update the manufacturer scaling factors without leaving the app.
 
 ## Script options
 | Flag | Description |
@@ -28,9 +44,20 @@ This repo currently contains the TT/MT/HT measurement files (`input/*.frd`), a d
 | `--add-manufacturer NAME` / `-addmanufacturer NAME` | Fit a manufacturer profile from `peq.txt`, `allpass.txt`, and `lowshelf.txt` sweeps (second-order filters) and update the manufacturer config instead of plotting. |
 | `--calibration-sample-rate HZ` | Override the sample rate used while fitting the sweeps (paired with `--add-manufacturer`, default 192000 Hz). |
 | `--peq-sweep FILE`, `--allpass-sweep FILE`, `--shelf-sweep FILE` | Override the sweep filenames relative to `--input-dir` when using `--add-manufacturer`. |
+| `--lowpass-bw-sweep FILE` / `--lowpass-bw-order N` | Optional Butterworth low-pass sweep and its order for `--add-manufacturer`. |
+| `--lowpass-lr-sweep FILE` / `--lowpass-lr-order N` | Optional Linkwitz-Riley low-pass sweep (even-order) for `--add-manufacturer`. |
 | `--test` | Generate `test.png` that compares the summed response against the VituixFR measurement (see below) instead of the default multi-way plot. |
 | `--vituix-file FILE` | Use an alternate FRD file for `--test` (defaults to `input/VituixFR.txt`). |
 | `--export-sum FILE` | Write the summed response to an FRD file (full grid by default, trimmed to 20–20 kHz when used with `--test`). |
+| `--cli` | Execute the legacy CLI instead of launching the GUI. |
+| `--project-store PATH` | Override the GUI project catalog folder (default: `project_store/`). |
+
+### Legacy CLI mode
+Run any of the historical commands by combining `--cli` with the flags above, e.g.:
+
+```powershell
+python main.py --cli --config project.json --no-show
+```
 
 ## Config file structure (`project.json`)
 The default `project.json` already matches the TT/MT/HT files in `input/`. Adjust it as needed:
@@ -92,6 +119,7 @@ Relative paths inside `ways[].file` are resolved against the config file’s dir
 
 ### Calibrating manufacturer profiles
 - Run `python main.py --add-manufacturer hypex` to estimate scale factors for `peq`, `shelf`, and `allpass` filters from the measured sweeps located under `input/` (`peq.txt`, `allpass.txt`, and `lowshelf.txt` by default). All three sweeps must represent **second-order** sections configured for 3 dB, $Q = 0.707$, and $f = 1000$ Hz; this also covers both low and high shelves because the manufacturer profile scales the shared shelf block.
+- Provide optional Butterworth or Linkwitz-Riley low-pass sweeps with `--lowpass-bw-sweep somefile.frd` and/or `--lowpass-lr-sweep otherfile.frd`. Pair them with `--lowpass-bw-order N` or `--lowpass-lr-order N` (even numbers only for Linkwitz-Riley) to tell the solver which order the hardware sweep represents; the GUI exposes the same inputs inside the calibration panel.
 - Use `--peq-sweep`, `--allpass-sweep`, or `--shelf-sweep` to point at alternative sweep filenames, and `--calibration-sample-rate` to match the DSP’s internal rate if it differs from the default 192 kHz. The command reuses `--manufacturer-config` to decide which JSON file should be updated (creating it when necessary) and overwrites existing entries with the same name.
 
 ### Test comparison mode

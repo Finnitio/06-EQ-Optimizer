@@ -28,6 +28,13 @@ from eq_optimizer.measurements import compute_complex
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="EQ optimizer prototype entry point")
+    parser.add_argument("--cli", action="store_true", help="Run the legacy CLI instead of launching the GUI")
+    parser.add_argument(
+        "--project-store",
+        type=Path,
+        default=Path("project_store"),
+        help="Folder used by the GUI to store managed projects",
+    )
     parser.add_argument("--input-dir", type=Path, default=Path("input"), help="Base folder for local measurement files (fallback when no config is found)")
     parser.add_argument("--tt-file", type=str, default="TT.frd", help="Bass way measurement file relative to --input-dir (fallback mode only)")
     parser.add_argument("--mt-file", type=str, default="MT.frd", help="Mid way measurement file (fallback mode only)")
@@ -80,6 +87,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Low-shelf sweep filename relative to --input-dir when using --add-manufacturer.",
     )
     parser.add_argument(
+        "--lowpass-bw-sweep",
+        type=str,
+        default=None,
+        help="Optional Butterworth low-pass sweep filename (relative to --input-dir) for --add-manufacturer.",
+    )
+    parser.add_argument(
+        "--lowpass-bw-order",
+        type=int,
+        default=4,
+        help="Order of the Butterworth low-pass sweep (ignored when no sweep filename is provided).",
+    )
+    parser.add_argument(
+        "--lowpass-lr-sweep",
+        type=str,
+        default=None,
+        help="Optional Linkwitz-Riley low-pass sweep filename (relative to --input-dir) for --add-manufacturer.",
+    )
+    parser.add_argument(
+        "--lowpass-lr-order",
+        type=int,
+        default=4,
+        help="Even order of the Linkwitz-Riley sweep (ignored when no sweep filename is provided).",
+    )
+    parser.add_argument(
         "--test",
         action="store_true",
         help="Generate test.png comparing the summed response with the VituixFR measurement instead of the standard plot.",
@@ -99,8 +130,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def run_cli(argv: list[str] | None = None) -> None:
+def run_application(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
+    if not args.cli:
+        from eq_optimizer.gui import launch_gui
+
+        launch_gui(args.project_store)
+        return
+
+    run_cli_mode(args)
+
+
+def run_cli_mode(args: argparse.Namespace) -> None:
     if args.add_manufacturer:
         run_manufacturer_calibration(args)
         return
@@ -123,6 +164,12 @@ def run_manufacturer_calibration(args: argparse.Namespace) -> None:
     if manufacturer_config_path is None:
         manufacturer_config_path = Path("manufacturers.json")
 
+    lowpass_specs: list[tuple[str, str, int]] = []
+    if args.lowpass_bw_sweep:
+        lowpass_specs.append(("butterworth", args.lowpass_bw_sweep, int(args.lowpass_bw_order)))
+    if args.lowpass_lr_sweep:
+        lowpass_specs.append(("linkwitz-riley", args.lowpass_lr_sweep, int(args.lowpass_lr_order)))
+
     profile = calibrate_manufacturer_profile(
         name=args.add_manufacturer,
         sweep_dir=args.input_dir.resolve(),
@@ -130,6 +177,7 @@ def run_manufacturer_calibration(args: argparse.Namespace) -> None:
         allpass_file=args.allpass_sweep,
         shelf_file=args.shelf_sweep,
         sample_rate=float(args.calibration_sample_rate),
+        lowpass_specs=lowpass_specs or None,
     )
     persist_manufacturer_profile(profile, manufacturer_config_path)
     print(f"Stored manufacturer '{profile['name']}' in {manufacturer_config_path}")
@@ -309,4 +357,4 @@ def derive_default_output_path(project_name: str) -> Path:
 
 
 if __name__ == "__main__":
-    run_cli()
+    run_application()
