@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -309,7 +310,7 @@ class ProjectTab(QWidget):
         message.setWindowTitle("Filterset conflict")
         message.setIcon(QMessageBox.Question)
         message.setText(
-            f"Filterset '{name}' already exists. Keep the existing definition or replace it with the imported one?"
+            f"Filterset '{name}' already exists. What would you like to do?"
         )
         if differences:
             message.setInformativeText("Differences found in: " + ", ".join(sorted(differences)))
@@ -318,12 +319,21 @@ class ProjectTab(QWidget):
                 details.append(f"[{key}] Existing: {json.dumps(existing.filters.get(key), indent=2)}")
                 details.append(f"[{key}] Imported: {json.dumps(incoming.filters.get(key), indent=2)}")
             message.setDetailedText("\n".join(details))
+        skip_button = message.addButton("Skip", QMessageBox.RejectRole)
         replace_button = message.addButton("Replace", QMessageBox.AcceptRole)
-        keep_button = message.addButton("Keep existing", QMessageBox.RejectRole)
-        message.setDefaultButton(keep_button)
+        rename_button = message.addButton("Rename", QMessageBox.ActionRole)
+        message.setDefaultButton(skip_button)
         message.exec()
+        
         if message.clickedButton() is replace_button:
             self.filterset_repo.save_entry(incoming)
+        elif message.clickedButton() is rename_button:
+            new_name, ok = QInputDialog.getText(
+                self, "Rename Filterset", f"New name for '{name}':", text=name + "_imported"
+            )
+            if ok and new_name.strip():
+                incoming.name = new_name.strip()
+                self.filterset_repo.save_entry(incoming)
 
     @staticmethod
     def _format_filter_differences(existing: dict[str, Any], incoming: dict[str, Any]) -> set[str]:

@@ -114,7 +114,7 @@ class FiltersetRepository:
         destination.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return destination
 
-    def save_entry(self, record: ManufacturerRecord) -> ManufacturerRecord:
+    def save_entry(self, record: FiltersetRecord) -> FiltersetRecord:
         entries = self._read_entries()
         normalized = self._sanitize(record.name)
         entry = {
@@ -263,7 +263,7 @@ class FiltersetRepository:
             raise KeyError(f"Manufacturer '{name}' not found")
         return entry
 
-    def _entry_to_record(entry: dict[str, Any]) -> FiltersetRecord:
+    def _entry_to_record(self, entry: dict[str, Any]) -> FiltersetRecord:
         return FiltersetRecord(
             name=entry.get("name", ""),
             description=entry.get("description", ""),

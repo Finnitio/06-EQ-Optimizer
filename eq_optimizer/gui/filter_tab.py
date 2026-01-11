@@ -13,10 +13,12 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QSplitter,
     QStackedWidget,
@@ -69,15 +71,35 @@ class FilterTab(QWidget):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.addWidget(QLabel("Filtersets"))
         self.filterset_list = QListWidget()
+        self.filterset_list.setStyleSheet(
+            "QListWidget::item:selected { background-color: #0060df; color: white; }"
+        )
         self.filterset_list.itemSelectionChanged.connect(self._update_plot)
         left_layout.addWidget(self.filterset_list)
 
-        refresh_row = QHBoxLayout()
+        button_row = QHBoxLayout()
+        self.new_filterset_button = QPushButton("New")
+        self.delete_filterset_button = QPushButton("Delete")
+        self.import_filterset_button = QPushButton("Import")
+        self.export_filterset_button = QPushButton("Export")
         self.refresh_button = QPushButton("Refresh")
+        for widget in (
+            self.new_filterset_button,
+            self.delete_filterset_button,
+            self.import_filterset_button,
+            self.export_filterset_button,
+            self.refresh_button,
+        ):
+            button_row.addWidget(widget)
+        button_row.addStretch()
+        left_layout.addLayout(button_row)
+        
+        # Connect button signals
+        self.new_filterset_button.clicked.connect(self._create_filterset)
+        self.delete_filterset_button.clicked.connect(self._delete_filterset)
+        self.import_filterset_button.clicked.connect(self._import_filterset)
+        self.export_filterset_button.clicked.connect(self._export_filterset)
         self.refresh_button.clicked.connect(self._refresh_filtersets)
-        refresh_row.addWidget(self.refresh_button)
-        refresh_row.addStretch()
-        left_layout.addLayout(refresh_row)
 
         splitter.addWidget(left_panel)
 
@@ -227,7 +249,7 @@ class FilterTab(QWidget):
         label = self._get_filter_label()
         self.axes.plot(freq, gain, label=label, linewidth=2)
 
-        self.axes.legend(loc="best")
+        self.axes.legend(loc="upper right", bbox_to_anchor=(1.0, 1.0), framealpha=0.9)
         self.canvas.draw_idle()
 
     def _on_filter_selected(self, filter_name: str) -> None:
@@ -729,18 +751,223 @@ class FilterTab(QWidget):
             filterset_name = f" [{item.text()}]"
         
         if self._active_filter == "peq":
-            return f"PEQ{filterset_name}: {self.peq_freq.value():.1f} Hz, Q={self.peq_q.value():.2f}, A={self.peq_a.value():.1f} dB"
+            return f"PEQ{filterset_name}"
         elif self._active_filter == "shelf":
             shelf_type = "Low" if self.shelf_low.isChecked() else "High"
-            return f"{shelf_type} Shelf{filterset_name}: {self.shelf_freq.value():.1f} Hz, Q={self.shelf_q.value():.2f}, A={self.shelf_a.value():.1f} dB"
+            return f"{shelf_type} Shelf{filterset_name}"
         elif self._active_filter == "allpass":
-            return f"Allpass{filterset_name}: {self.allpass_freq.value():.1f} Hz, Q={self.allpass_q.value():.2f}"
+            return f"Allpass{filterset_name}"
         elif self._active_filter == "linkwitz-riley":
             order = self.lr_order_group.checkedId()
-            mode = "Lowpass" if self.lr_lowpass.isChecked() else "Highpass"
-            return f"Linkwitz-Riley {order}{filterset_name}: {self.lr_freq.value():.1f} Hz, {mode}"
+            mode = "LP" if self.lr_lowpass.isChecked() else "HP"
+            return f"LR{order} {mode}{filterset_name}"
         elif self._active_filter == "butterworth":
             order = self.bw_order_group.checkedId()
-            mode = "Lowpass" if self.bw_lowpass.isChecked() else "Highpass"
-            return f"Butterworth {order}{filterset_name}: {self.bw_freq.value():.1f} Hz, {mode}"
+            mode = "LP" if self.bw_lowpass.isChecked() else "HP"
+            return f"BW{order} {mode}{filterset_name}"
         return "Filter"
+    
+    def _create_filterset(self) -> None:
+        """Create a new filterset."""
+        name, ok = QInputDialog.getText(self, "Create Filterset", "Filterset name:")
+        if not ok or not name.strip():
+            return
+        
+        description, ok = QInputDialog.getText(
+            self, "Create Filterset", "Description (optional):"
+        )
+        if not ok:
+            return
+        
+        try:
+            self.filterset_repository.create_filterset(name.strip(), description.strip())
+            self._refresh_filtersets()
+            # Select the newly created filterset
+            for row in range(self.filterset_list.count()):
+                item = self.filterset_list.item(row)
+                if item.data(Qt.UserRole) == name.strip():
+                    self.filterset_list.setCurrentRow(row)
+                    break
+        except Exception as exc:
+            QMessageBox.critical(self, "Create failed", str(exc))
+    
+    def _delete_filterset(self) -> None:
+        """Delete the selected filterset."""
+        item = self.filterset_list.currentItem()
+        if not item:
+            QMessageBox.information(self, "Select filterset", "Choose a filterset to delete.")
+            return
+        
+        filterset_name = item.data(Qt.UserRole)
+        confirm = QMessageBox.question(
+            self,
+            "Delete filterset",
+            f"Delete '{filterset_name}'? This cannot be undone.",
+        )
+        if confirm != QMessageBox.Yes:
+            return
+        
+        try:
+            self.filterset_repository.delete_filterset(filterset_name)
+            self._refresh_filtersets()
+        except Exception as exc:
+            QMessageBox.critical(self, "Delete failed", str(exc))
+    
+    def _import_filterset(self) -> None:
+        """Import filtersets from a file."""
+        from pathlib import Path
+        import json
+        
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import filtersets",
+            str(Path.cwd()),
+            "JSON files (*.json);;All files (*)",
+        )
+        if not file_path:
+            return
+        
+        try:
+            # Load and parse the file
+            payload = json.loads(Path(file_path).read_text(encoding="utf-8"))
+            
+            # Support both filtersets and manufacturers keys
+            if "filtersets" in payload:
+                entries = payload["filtersets"]
+            elif "manufacturers" in payload:
+                entries = payload["manufacturers"]
+            else:
+                QMessageBox.critical(self, "Import failed", "File does not contain filtersets.")
+                return
+            
+            if not isinstance(entries, list):
+                QMessageBox.critical(self, "Import failed", "Invalid file format.")
+                return
+            
+            imported_count = 0
+            imported_names = []
+            
+            for entry in entries:
+                name = str(entry.get("name", "")).strip()
+                if not name:
+                    continue
+                
+                incoming = FiltersetRecord(
+                    name=name,
+                    description=entry.get("description", ""),
+                    filters=dict(entry.get("filters", {})),
+                    blocks=list(entry.get("blocks", [])),
+                )
+                
+                # Check if filterset already exists
+                try:
+                    existing = self.filterset_repository.get_entry(name)
+                except KeyError:
+                    # Doesn't exist, just save it
+                    self.filterset_repository.save_entry(incoming)
+                    imported_count += 1
+                    imported_names.append(name)
+                    continue
+                
+                # Exists - show conflict dialog
+                action = self._show_import_conflict_dialog(name, existing.filters, incoming.filters)
+                
+                if action == "skip":
+                    continue
+                elif action == "replace":
+                    self.filterset_repository.save_entry(incoming)
+                    imported_count += 1
+                    imported_names.append(name)
+                elif action.startswith("rename:"):
+                    new_name = action.split(":", 1)[1]
+                    incoming.name = new_name
+                    self.filterset_repository.save_entry(incoming)
+                    imported_count += 1
+                    imported_names.append(new_name)
+            
+            self._refresh_filtersets()
+            
+            if imported_count > 0:
+                names = ", ".join(imported_names[:3])
+                if imported_count > 3:
+                    names += f" and {imported_count - 3} more"
+                QMessageBox.information(
+                    self, "Import successful", f"Imported {imported_count} filterset(s): {names}"
+                )
+            else:
+                QMessageBox.information(self, "Import", "No filtersets were imported.")
+                
+        except Exception as exc:
+            QMessageBox.critical(self, "Import failed", str(exc))
+    
+    def _export_filterset(self) -> None:
+        """Export the selected filterset to a file."""
+        from pathlib import Path
+        
+        item = self.filterset_list.currentItem()
+        if not item:
+            QMessageBox.information(self, "Select filterset", "Choose a filterset to export.")
+            return
+        
+        filterset_name = item.data(Qt.UserRole)
+        destination, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export filterset",
+            str(Path.cwd() / f"{filterset_name}.json"),
+            "JSON files (*.json);;All files (*)",
+        )
+        if not destination:
+            return
+        
+        try:
+            self.filterset_repository.export_to_file(filterset_name, Path(destination))
+            QMessageBox.information(
+                self, "Export successful", f"Filterset saved to {destination}"
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Export failed", str(exc))
+    
+    def _show_import_conflict_dialog(self, name: str, existing_filters: dict, 
+                                     incoming_filters: dict) -> str:
+        """Show dialog for import conflicts. Returns 'skip', 'replace', or 'rename:newname'."""
+        import json
+        
+        # Calculate differences
+        differences = set()
+        for key in set(existing_filters).union(incoming_filters):
+            if existing_filters.get(key) != incoming_filters.get(key):
+                differences.add(key)
+        
+        message = QMessageBox(self)
+        message.setWindowTitle("Import Conflict")
+        message.setIcon(QMessageBox.Question)
+        message.setText(
+            f"Filterset '{name}' already exists. What would you like to do?"
+        )
+        
+        if differences:
+            message.setInformativeText("Differences found in: " + ", ".join(sorted(differences)))
+            details = []
+            for key in sorted(differences):
+                details.append(f"[{key}] Existing: {json.dumps(existing_filters.get(key), indent=2)}")
+                details.append(f"[{key}] Imported: {json.dumps(incoming_filters.get(key), indent=2)}")
+            message.setDetailedText("\n".join(details))
+        
+        skip_button = message.addButton("Skip", QMessageBox.RejectRole)
+        replace_button = message.addButton("Replace", QMessageBox.AcceptRole)
+        rename_button = message.addButton("Rename", QMessageBox.ActionRole)
+        message.setDefaultButton(skip_button)
+        
+        message.exec()
+        
+        if message.clickedButton() is replace_button:
+            return "replace"
+        elif message.clickedButton() is rename_button:
+            new_name, ok = QInputDialog.getText(
+                self, "Rename Filterset", f"New name for '{name}':", text=name + "_imported"
+            )
+            if ok and new_name.strip():
+                return f"rename:{new_name.strip()}"
+            return "skip"
+        else:
+            return "skip"

@@ -241,6 +241,12 @@
           }
         }
       ]
+    },
+    {
+      "name": "Hypex Fusion Amplifier",
+      "description": "",
+      "filters": {},
+      "blocks": []
     }
   ]
 }
