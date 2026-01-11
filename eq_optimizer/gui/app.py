@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
-from PySide6.QtCore import Qt
+import json
+
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -25,30 +27,35 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from eq_optimizer.manufacturer_store import ManufacturerRepository
+from eq_optimizer.filterset_store import FiltersetRecord, FiltersetRepository
 from eq_optimizer.project_store import ProjectRecord, ProjectRepository
 from .filter_tab import FilterTab
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, project_repo: ProjectRepository, manufacturer_repo: ManufacturerRepository) -> None:
+    def __init__(self, project_repo: ProjectRepository, filterset_repo: FiltersetRepository) -> None:
         super().__init__()
         self.setWindowTitle("EQ Optimizer")
         self.resize(1200, 750)
 
         self._repository = project_repo
         self._tabs = QTabWidget()
-        self._project_tab = ProjectTab(project_repo)
+        self._project_tab = ProjectTab(project_repo, filterset_repo)
         self._tabs.addTab(self._project_tab, "Project")
-        self._filter_tab = FilterTab(manufacturer_repo)
-        self._tabs.addTab(self._filter_tab, "Filters")
+        self._filter_tab = FilterTab(project_repo, filterset_repo)
+        self._project_tab.projectSelected.connect(self._filter_tab.set_active_project)
+        self._project_tab.publish_selection()
+        self._tabs.addTab(self._filter_tab, "Filtersets")
         self.setCentralWidget(self._tabs)
 
 
 class ProjectTab(QWidget):
-    def __init__(self, repository: ProjectRepository) -> None:
+    projectSelected = Signal(object, object)
+
+    def __init__(self, repository: ProjectRepository, filterset_repo: FiltersetRepository) -> None:
         super().__init__()
         self.repository = repository
+        self.filterset_repo = filterset_repo
         self._records: dict[str, ProjectRecord] = {}
 
         layout = QVBoxLayout(self)
@@ -59,6 +66,9 @@ class ProjectTab(QWidget):
         list_layout.setContentsMargins(0, 0, 0, 0)
 
         self.list_widget = QListWidget()
+        self.list_widget.setStyleSheet(
+            "QListWidget::item:selected { background-color: #0060df; color: white; }"
+        )
         self.list_widget.itemSelectionChanged.connect(self._update_details)
         list_layout.addWidget(self.list_widget)
 
@@ -101,6 +111,11 @@ class ProjectTab(QWidget):
 
         self.refresh_projects()
 
+    def publish_selection(self) -> None:
+        """Re-emit the current selection so late listeners stay in sync."""
+
+        self._update_details()
+
     # ------------------------------------------------------------------
     def refresh_projects(self) -> None:
         try:
@@ -120,18 +135,20 @@ class ProjectTab(QWidget):
             item.setToolTip(str(record.file_path))
             self.list_widget.addItem(item)
 
-        if self._records:
-            index = 0
-            if current_id:
-                for row in range(self.list_widget.count()):
-                    if self.list_widget.item(row).data(Qt.UserRole) == current_id:
-                        index = row
-                        break
-            self.list_widget.setCurrentRow(index)
+        preferred_id = current_id or self.repository.get_last_selected_project_id()
+        target_row = self._row_for_record_id(preferred_id)
+        if target_row is None and self.list_widget.count():
+            target_row = 0
+
+        if target_row is not None:
+            self.list_widget.setCurrentRow(target_row)
         else:
+            self.list_widget.clearSelection()
+        if not self._records:
             self.detail_label.setText(
                 "No projects found. Create one with the New button to start editing it inside the GUI."
             )
+        self._update_details()
 
     # ------------------------------------------------------------------
     def _create_project(self) -> None:
@@ -155,8 +172,21 @@ class ProjectTab(QWidget):
         )
         if not file_path:
             return
+        source_path = Path(file_path)
         try:
-            record = self.repository.import_project(Path(file_path))
+            payload = json.loads(source_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            QMessageBox.critical(self, "Import failed", f"Unable to read project file: {exc}")
+            return
+        if not isinstance(payload, dict) or "ways" not in payload:
+            QMessageBox.critical(self, "Import failed", "Project file must be a JSON object containing 'ways'.")
+            return
+
+        filterset_snapshot = payload.pop("filterset", None)
+        try:
+            if filterset_snapshot:
+                self._handle_imported_filterset(filterset_snapshot)
+            record = self.repository.store_payload(payload)
         except Exception as exc:
             QMessageBox.critical(self, "Import failed", str(exc))
             return
@@ -178,11 +208,16 @@ class ProjectTab(QWidget):
         if not destination:
             return
         try:
-            path = self.repository.export_project(record.id, Path(destination))
+            payload = self.repository.load_payload(record.id)
+            snapshot = self._snapshot_filterset(payload)
+            if snapshot:
+                payload["filterset"] = snapshot
+            destination_path = Path(destination)
+            destination_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         except Exception as exc:
             QMessageBox.critical(self, "Export failed", str(exc))
             return
-        QMessageBox.information(self, "Exported", f"Project saved to {path}.")
+        QMessageBox.information(self, "Exported", f"Project saved to {destination}.")
 
     def _delete_project(self) -> None:
         record = self._selected_record()
@@ -207,19 +242,29 @@ class ProjectTab(QWidget):
         record = self._selected_record()
         if not record:
             self.detail_label.setText("Select a project to view details.")
-            self.detail_text.clear()
+            self.projectSelected.emit(None, None)
             return
+        try:
+            payload = self.repository.load_payload(record.id)
+        except Exception as exc:
+            self.detail_label.setText(f"Unable to load project: {exc}")
+            self.projectSelected.emit(None, None)
+            return
+        self.repository.set_last_selected_project_id(record.id)
+        filterset = payload.get("filterset", "generic")
         self.detail_label.setText(
             "\n".join(
                 [
                     f"Name: {record.name}",
                     f"Stored at: {record.file_path}",
                     f"Updated: {record.updated_at}",
+                    f"Filterset: {filterset}",
                     "",
                     "Detailed editing will be added in the following steps.",
                 ]
             )
         )
+        self.projectSelected.emit(record, payload)
 
     def _selected_record(self) -> Optional[ProjectRecord]:
         item = self.list_widget.currentItem()
@@ -234,6 +279,74 @@ class ProjectTab(QWidget):
             if item.data(Qt.UserRole) == record_id:
                 self.list_widget.setCurrentRow(row)
                 break
+
+    def _row_for_record_id(self, record_id: Optional[str]) -> Optional[int]:
+        if not record_id:
+            return None
+        for row in range(self.list_widget.count()):
+            if self.list_widget.item(row).data(Qt.UserRole) == record_id:
+                return row
+        return None
+
+    def _handle_imported_filterset(self, snapshot: dict[str, Any]) -> None:
+        name = str(snapshot.get("name", "")).strip()
+        if not name:
+            return
+        incoming = FiltersetRecord(
+            name=name,
+            description=snapshot.get("description", ""),
+            filters=dict(snapshot.get("filters", {})),
+            blocks=list(snapshot.get("blocks", [])),
+        )
+        try:
+            existing = self.filterset_repo.get_entry(name)
+        except KeyError:
+            self.filterset_repo.save_entry(incoming)
+            return
+
+        differences = self._format_filter_differences(existing.filters, incoming.filters)
+        message = QMessageBox(self)
+        message.setWindowTitle("Filterset conflict")
+        message.setIcon(QMessageBox.Question)
+        message.setText(
+            f"Filterset '{name}' already exists. Keep the existing definition or replace it with the imported one?"
+        )
+        if differences:
+            message.setInformativeText("Differences found in: " + ", ".join(sorted(differences)))
+            details = []
+            for key in sorted(differences):
+                details.append(f"[{key}] Existing: {json.dumps(existing.filters.get(key), indent=2)}")
+                details.append(f"[{key}] Imported: {json.dumps(incoming.filters.get(key), indent=2)}")
+            message.setDetailedText("\n".join(details))
+        replace_button = message.addButton("Replace", QMessageBox.AcceptRole)
+        keep_button = message.addButton("Keep existing", QMessageBox.RejectRole)
+        message.setDefaultButton(keep_button)
+        message.exec()
+        if message.clickedButton() is replace_button:
+            self.filterset_repo.save_entry(incoming)
+
+    @staticmethod
+    def _format_filter_differences(existing: dict[str, Any], incoming: dict[str, Any]) -> set[str]:
+        differing: set[str] = set()
+        for key in set(existing).union(incoming):
+            if existing.get(key) != incoming.get(key):
+                differing.add(key)
+        return differing
+
+    def _snapshot_filterset(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        filterset_name = str(payload.get("filterset", "")).strip()
+        if not filterset_name:
+            return None
+        try:
+            record = self.filterset_repo.get_entry(filterset_name)
+        except KeyError:
+            return None
+        return {
+            "name": record.name,
+            "description": record.description,
+            "filters": record.filters,
+            "blocks": record.blocks,
+        }
 
 
 class ProjectNameDialog(QDialog):
@@ -265,8 +378,8 @@ def launch_gui(storage_dir: Path | None = None) -> None:
         owns_app = True
 
     project_repo = ProjectRepository(storage_dir)
-    manufacturer_repo = ManufacturerRepository()
-    window = MainWindow(project_repo, manufacturer_repo)
+    filterset_repo = FiltersetRepository()
+    window = MainWindow(project_repo, filterset_repo)
     window.show()
 
     if owns_app:

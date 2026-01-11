@@ -1,7 +1,7 @@
 {
   "name": "Vibe v5",
   "sample_rate": 192000,
-  "manufacturer": "generic",
+  "manufacturer": "hypex",
   "ways": [
     {
       "name": "TT",

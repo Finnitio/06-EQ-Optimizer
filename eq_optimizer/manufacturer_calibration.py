@@ -24,20 +24,12 @@ class ReferenceSettings:
 
 
 @dataclass(slots=True)
-class SweepFiles:
-    peq: Path
-    allpass: Path
-    shelf: Path
-
-    def paths(self) -> Iterable[Path]:
-        return (self.peq, self.allpass, self.shelf)
-
-
-@dataclass(slots=True)
 class LowpassSpec:
     kind: str
     file: str
     order: int
+    mode: str
+    reference_freq: float | None = None
 
 
 @dataclass(slots=True)
@@ -51,12 +43,13 @@ class _ParameterSpec:
 def calibrate_manufacturer_profile(
     name: str,
     sweep_dir: Path,
-    peq_file: str,
-    allpass_file: str,
-    shelf_file: str,
+    peq_file: str | None,
+    allpass_file: str | None,
+    shelf_file: str | None,
     sample_rate: float,
-    lowpass_specs: Iterable[tuple[str, str, int]] | None = None,
+    lowpass_specs: Iterable[tuple[str, str, int, str, float]] | None = None,
     reference: ReferenceSettings | None = None,
+    base_filters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create a manufacturer entry by fitting sweeps for the supported filter blocks."""
 
@@ -66,21 +59,27 @@ def calibrate_manufacturer_profile(
 
     ref = reference or ReferenceSettings()
     normalized_lowpass = _normalize_lowpass_specs(lowpass_specs)
-    sweeps = SweepFiles(
-        peq=(sweep_dir / peq_file).resolve(),
-        allpass=(sweep_dir / allpass_file).resolve(),
-        shelf=(sweep_dir / shelf_file).resolve(),
-    )
-
-    for path in sweeps.paths():
-        if not path.exists():
-            raise FileNotFoundError(f"Missing calibration sweep: {path}")
-
-    responses = {
-        "peq": load_frd(sweeps.peq),
-        "allpass": load_frd(sweeps.allpass),
-        "shelf": load_frd(sweeps.shelf),
+    sweep_dir = sweep_dir.resolve()
+    provided_files = {
+        key: filename
+        for key, filename in (
+            ("peq", peq_file),
+            ("allpass", allpass_file),
+            ("shelf", shelf_file),
+        )
+        if filename
     }
+    paths: dict[str, Path] = {}
+    for key, filename in provided_files.items():
+        candidate = (sweep_dir / filename).resolve()
+        if not candidate.exists():
+            raise FileNotFoundError(f"Missing calibration sweep: {candidate}")
+        paths[key] = candidate
+
+    if not paths and not normalized_lowpass:
+        raise ValueError("At least one calibration sweep is required")
+
+    responses = {key: load_frd(path) for key, path in paths.items()}
     lowpass_entries: list[tuple[LowpassSpec, Path, Response]] = []
     for spec in normalized_lowpass:
         candidate = (sweep_dir / spec.file).resolve()
@@ -89,24 +88,31 @@ def calibrate_manufacturer_profile(
         response = load_frd(candidate)
         lowpass_entries.append((spec, candidate, response))
 
-    filters = {
-        "peq": _calibrate_peq(responses["peq"], sample_rate, ref),
-        "allpass": _calibrate_allpass(responses["allpass"], sample_rate, ref),
-        "shelf": _calibrate_shelf(responses["shelf"], sample_rate, ref),
-    }
-    for spec, _path, response in lowpass_entries:
+    filters = dict(base_filters or {})
+    calibrated_sections: list[str] = []
+    if "peq" in responses:
+        filters["peq"] = _calibrate_peq(responses["peq"], sample_rate, ref)
+        calibrated_sections.append(f"PEQ ({paths['peq'].name})")
+    if "allpass" in responses:
+        filters["allpass"] = _calibrate_allpass(responses["allpass"], sample_rate, ref)
+        calibrated_sections.append(f"All-pass ({paths['allpass'].name})")
+    if "shelf" in responses:
+        filters["shelf"] = _calibrate_shelf(responses["shelf"], sample_rate, ref)
+        calibrated_sections.append(f"Shelf ({paths['shelf'].name})")
+    crossover_sections: list[str] = []
+    for spec, path, response in lowpass_entries:
         filters[spec.kind] = _calibrate_lowpass(spec, response, sample_rate, ref)
+        crossover_sections.append(f"{spec.kind} {spec.mode} ({path.name}, order {spec.order})")
 
+    description_bits: list[str] = []
+    if calibrated_sections:
+        description_bits.append("Core sweeps: " + ", ".join(calibrated_sections))
+    if crossover_sections:
+        description_bits.append("Crossover sweeps: " + ", ".join(crossover_sections))
+    description_context = "; ".join(description_bits) if description_bits else "Reused existing filters"
     description = (
-        "Auto-calibrated from 2nd-order PEQ/All-pass/Shelf sweeps "
-        f"({sweeps.peq.name}, {sweeps.allpass.name}, {sweeps.shelf.name}) "
-        f"with {ref.gain_db} dB, Q={ref.q}, f={ref.freq_hz} Hz."
+        f"{description_context}. Reference target {ref.gain_db} dB, Q={ref.q}, f={ref.freq_hz} Hz."
     )
-    if lowpass_entries:
-        lp_desc = ", ".join(
-            f"{spec.kind} ({path.name}, order {spec.order})" for spec, path, _ in lowpass_entries
-        )
-        description += f" Low-pass sweeps: {lp_desc}."
 
     return {"name": clean_name, "description": description, "filters": filters}
 
@@ -209,19 +215,21 @@ def _calibrate_lowpass(
     sample_rate: float,
     reference: ReferenceSettings,
 ) -> dict[str, float]:
-    bounds = _ParameterSpec("freq", reference.freq_hz, reference.freq_hz * 0.25, reference.freq_hz * 4.0)
+    center_freq = spec.reference_freq or reference.freq_hz
+    bounds = _ParameterSpec("freq", center_freq, center_freq * 0.25, center_freq * 4.0)
     result = _fit_section(
         spec.kind,
         response,
         sample_rate,
         specs=[bounds],
-        extra={"mode": "lowpass", "order": spec.order},
+        extra={"mode": spec.mode, "order": spec.order},
         mag_weight=1.0,
         phase_weight=0.05,
     )
     payload = {
-        "freq_scale": _scale(result["freq"], reference.freq_hz),
+        "freq_scale": _scale(result["freq"], center_freq),
         "reference_order": spec.order,
+        "mode": spec.mode,
     }
     return payload
 
@@ -276,14 +284,18 @@ def _scale(value: float, reference: float) -> float:
     return float(np.round(ratio, 6))
 
 
-def _normalize_lowpass_specs(specs: Iterable[tuple[str, str, int]] | None) -> list[LowpassSpec]:
+def _normalize_lowpass_specs(specs: Iterable[tuple[str, str, int, str, float]] | None) -> list[LowpassSpec]:
     normalized: list[LowpassSpec] = []
     if not specs:
         return normalized
     for item in specs:
-        if len(item) != 3:
-            raise ValueError("Low-pass sweep spec must be (kind, filename, order)")
-        kind, filename, order = item
+        if len(item) == 4:
+            kind, filename, order, mode = item
+            freq_value = None
+        elif len(item) == 5:
+            kind, filename, order, mode, freq_value = item
+        else:
+            raise ValueError("Low-pass sweep spec must be (kind, filename, order, mode[, freq_hz])")
         kind_key = str(kind or "").strip().lower()
         if kind_key not in {"butterworth", "linkwitz-riley"}:
             raise ValueError(f"Unsupported low-pass filter kind '{kind}'")
@@ -295,5 +307,15 @@ def _normalize_lowpass_specs(specs: Iterable[tuple[str, str, int]] | None) -> li
             raise ValueError("Low-pass sweep order must be a positive integer")
         if kind_key == "linkwitz-riley" and order_value % 2 != 0:
             raise ValueError("Linkwitz-Riley sweeps require an even filter order")
-        normalized.append(LowpassSpec(kind=kind_key, file=file_key, order=order_value))
+        mode_key = str(mode or "").strip().lower()
+        if mode_key not in {"lowpass", "highpass"}:
+            raise ValueError("Low-pass sweep mode must be 'lowpass' or 'highpass'")
+        freq_ref = None
+        if len(item) == 5:
+            freq_ref = float(freq_value)
+            if freq_ref <= 0:
+                raise ValueError("Low-pass sweep frequency must be positive")
+        normalized.append(
+            LowpassSpec(kind=kind_key, file=file_key, order=order_value, mode=mode_key, reference_freq=freq_ref)
+        )
     return normalized

@@ -22,7 +22,7 @@ class ProjectRecord:
 _DEFAULT_TEMPLATE = {
     "name": "New Project",
     "sample_rate": 192000,
-    "manufacturer": "generic",
+    "filterset": "generic",
     "ways": [
         {
             "name": "TT",
@@ -59,6 +59,7 @@ class ProjectRepository:
         self.storage_dir = (storage_dir or Path("project_store")).resolve()
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.index_path = self.storage_dir / "index.json"
+        self.prefs_path = self.storage_dir / "prefs.json"
         if not self.index_path.exists():
             self._write_index({"projects": []})
 
@@ -92,12 +93,33 @@ class ProjectRepository:
             payload["name"] = source_file.stem
         return self._store_payload(payload)
 
+    def store_payload(self, payload: dict[str, Any]) -> ProjectRecord:
+        """Persist *payload* inside the project catalog and return its record."""
+
+        return self._store_payload(json.loads(json.dumps(payload)))
+
     def export_project(self, record_id: str, destination: Path) -> Path:
         record = self.get_record(record_id)
         destination = destination.expanduser().resolve()
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(record.file_path.read_text(encoding="utf-8"), encoding="utf-8")
         return destination
+
+    def load_payload(self, record_id: str) -> dict[str, Any]:
+        record = self.get_record(record_id)
+        if not record.file_path.exists():
+            raise FileNotFoundError(f"Stored project '{record_id}' payload is missing at {record.file_path}")
+        data = json.loads(record.file_path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("Stored project payload must be a JSON object")
+        return data
+
+    def update_project_payload(self, record_id: str, payload: dict[str, Any]) -> ProjectRecord:
+        record = self.get_record(record_id)
+        record.file_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        updated_name = payload.get("name", record.name)
+        self._update_index_entry(record_id, name=updated_name)
+        return self.get_record(record_id)
 
     def delete_project(self, record_id: str) -> None:
         entries = self._read_index().get("projects", [])
@@ -124,6 +146,19 @@ class ProjectRepository:
                     dirty = True
         if dirty:
             self._write_index({"projects": entries})
+
+    def get_last_selected_project_id(self) -> str | None:
+        prefs = self._read_prefs()
+        value = prefs.get("last_selected_project_id")
+        return str(value) if value else None
+
+    def set_last_selected_project_id(self, record_id: str | None) -> None:
+        prefs = self._read_prefs()
+        if record_id:
+            prefs["last_selected_project_id"] = record_id
+        else:
+            prefs.pop("last_selected_project_id", None)
+        self._write_prefs(prefs)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -161,6 +196,29 @@ class ProjectRepository:
 
     def _write_index(self, data: dict[str, Any]) -> None:
         self.index_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    def _update_index_entry(self, record_id: str, **updates: Any) -> None:
+        entries = self._read_index().get("projects", [])
+        modified = False
+        for entry in entries:
+            if entry.get("id") == record_id:
+                entry.update(updates)
+                entry["updated_at"] = _timestamp()
+                modified = True
+                break
+        if modified:
+            self._write_index({"projects": entries})
+
+    def _read_prefs(self) -> dict[str, Any]:
+        if not self.prefs_path.exists():
+            return {}
+        try:
+            return json.loads(self.prefs_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _write_prefs(self, data: dict[str, Any]) -> None:
+        self.prefs_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def _timestamp() -> str:

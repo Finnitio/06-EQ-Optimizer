@@ -1,5 +1,5 @@
 {
-  "manufacturers": [
+  "filtersets": [
     {
       "name": "generic",
       "description": "Baseline RBJ cookbook biquads with no additional constraints.",
@@ -74,7 +74,7 @@
     },
     {
       "name": "hypex",
-      "description": "Auto-calibrated from 2nd-order PEQ/All-pass/Shelf sweeps (peq.txt, allpass.txt, lowshelf.txt) with 3.0 dB, Q=0.707, f=1000.0 Hz.",
+      "description": "Auto-calibrated from 2nd-order PEQ/All-pass/Shelf sweeps (peq.txt, allpass.txt, lowshelf.txt) with 3.0 dB, Q=0.707, f=1000.0 Hz. Low-pass sweeps: butterworth (lr24.txt, order 4), linkwitz-riley (lr24.txt, order 4).",
       "filters": {
         "peq": {
           "formula": "cookbook",
@@ -92,6 +92,14 @@
           "freq_scale": 0.999301,
           "gain_scale": 1.999571,
           "slope_scale": 0.708586
+        },
+        "butterworth": {
+          "freq_scale": 0.958885,
+          "reference_order": 4
+        },
+        "linkwitz-riley": {
+          "freq_scale": 0.973978,
+          "reference_order": 4
         }
       },
       "blocks": [
@@ -188,7 +196,7 @@
         },
         {
           "id": "template-lr_low",
-          "type": "linkwitz-riley",
+          "type": "butterworth",
           "params": {
             "mode": "lowpass",
             "freq": 1000.0,
@@ -201,7 +209,7 @@
           "params": {
             "f0": 1000.0,
             "q": 0.707,
-            "gain_db": 3.0
+            "gain_db": 2.5
           }
         },
         {
@@ -212,6 +220,24 @@
             "freq": 1000.0,
             "slope": 0.707,
             "gain_db": 3.0
+          }
+        },
+        {
+          "id": "template-lowpass",
+          "type": "butterworth",
+          "params": {
+            "mode": "lowpass",
+            "freq": 1000.0,
+            "order": 4
+          }
+        },
+        {
+          "id": "template-crossover",
+          "type": "butterworth",
+          "params": {
+            "freq": 800.0,
+            "mode": "lowpass",
+            "order": 4
           }
         }
       ]
