@@ -55,6 +55,7 @@ class FilterTab(QWidget):
         self.filterset_repository = filterset_repository
         self._active_project = None
         self._active_filter = "peq"
+        self._last_sweep_dir = None  # Remember last directory for sweep files
         self._build_ui()
         self._refresh_filtersets()
         self._update_filter_panel()
@@ -165,6 +166,17 @@ class FilterTab(QWidget):
         self._build_butterworth_panel()
         
         right_layout.addWidget(filter_group)
+        
+        # Calibrate button
+        calibrate_button = QPushButton("Calibrate")
+        calibrate_button.setStyleSheet(
+            "QPushButton { border: 1px solid #0060df; border-radius: 4px; padding: 8px 16px; "
+            "color: white; background-color: #0060df; font-weight: bold; } "
+            "QPushButton:hover { background-color: #0050bf; }"
+        )
+        calibrate_button.clicked.connect(self._calibrate_filters)
+        right_layout.addWidget(calibrate_button)
+        
         right_layout.addStretch()
         splitter.addWidget(right_panel)
 
@@ -229,7 +241,14 @@ class FilterTab(QWidget):
         self.axes.clear()
         self.axes.set_xscale("log")
         self.axes.set_xlabel("Frequency [Hz]")
-        self.axes.set_ylabel("Magnitude [dB]")
+        
+        # For allpass, show phase; for others, show magnitude
+        is_phase_plot = self._active_filter == "allpass"
+        if is_phase_plot:
+            self.axes.set_ylabel("Phase [°]")
+        else:
+            self.axes.set_ylabel("Magnitude [dB]")
+        
         self.axes.grid(True, which="both", linestyle=":", linewidth=0.6)
 
         freq = _PLOT_FREQ
@@ -238,16 +257,16 @@ class FilterTab(QWidget):
         # Load and plot sweep data if available
         sweep_path = self._get_current_sweep_path()
         if sweep_path:
-            sweep_freq, sweep_mag = self._load_sweep_file(sweep_path)
-            if sweep_freq is not None and sweep_mag is not None:
-                self.axes.plot(sweep_freq, sweep_mag, label="Sweep", linewidth=1.5, 
+            sweep_freq, sweep_data = self._load_sweep_file(sweep_path)
+            if sweep_freq is not None and sweep_data is not None:
+                self.axes.plot(sweep_freq, sweep_data, label="Sweep", linewidth=1.5, 
                              color="#ff0000", alpha=0.8)
         
         # Calculate filter response based on active filter type
-        gain = self._calculate_filter_response(freq, sample_rate)
+        response = self._calculate_filter_response(freq, sample_rate)
         
         label = self._get_filter_label()
-        self.axes.plot(freq, gain, label=label, linewidth=2)
+        self.axes.plot(freq, response, label=label, linewidth=2)
 
         self.axes.legend(loc="upper right", bbox_to_anchor=(1.0, 1.0), framealpha=0.9)
         self.canvas.draw_idle()
@@ -274,8 +293,8 @@ class FilterTab(QWidget):
         
         self.peq_q = QDoubleSpinBox()
         self.peq_q.setRange(0.1, 20.0)
-        self.peq_q.setValue(0.707)
         self.peq_q.setDecimals(3)
+        self.peq_q.setValue(0.707)
         layout.addRow("Q:", self.peq_q)
         
         self.peq_a = QDoubleSpinBox()
@@ -312,8 +331,8 @@ class FilterTab(QWidget):
         
         self.shelf_q = QDoubleSpinBox()
         self.shelf_q.setRange(0.1, 20.0)
-        self.shelf_q.setValue(0.707)
         self.shelf_q.setDecimals(3)
+        self.shelf_q.setValue(0.707)
         layout.addRow("Q:", self.shelf_q)
         
         self.shelf_a = QDoubleSpinBox()
@@ -369,8 +388,8 @@ class FilterTab(QWidget):
         
         self.allpass_q = QDoubleSpinBox()
         self.allpass_q.setRange(0.1, 20.0)
-        self.allpass_q.setValue(0.707)
         self.allpass_q.setDecimals(3)
+        self.allpass_q.setValue(0.707)
         layout.addRow("Q:", self.allpass_q)
         
         self.allpass_a = QDoubleSpinBox()
@@ -525,14 +544,22 @@ class FilterTab(QWidget):
 
     def _browse_sweep(self, line_edit: QLineEdit) -> None:
         from pathlib import Path
+        
+        # Use last sweep directory or current working directory
+        start_dir = str(self._last_sweep_dir) if self._last_sweep_dir else str(Path.cwd())
+        
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Select sweep file",
-            str(Path.cwd()),
+            start_dir,
             "Sweep files (*.frd *.txt);;All files (*)",
         )
         if path:
             line_edit.setText(path)
+            # Remember the directory for next time
+            self._last_sweep_dir = Path(path).parent
+            # Trigger plot update
+            self._update_plot()
     
     def _get_current_sweep_path(self) -> str:
         """Get the sweep path for the currently active filter."""
@@ -562,15 +589,21 @@ class FilterTab(QWidget):
             return {}
     
     def _load_sweep_file(self, file_path: str) -> tuple[np.ndarray | None, np.ndarray | None]:
-        """Load frequency and magnitude data from a sweep file (.frd or .txt)."""
+        """Load frequency and magnitude/phase data from a sweep file (.frd or .txt).
+        For allpass filters, loads phase data (column 3), otherwise magnitude (column 2).
+        """
         from pathlib import Path
         
         if not file_path or not Path(file_path).exists():
             return None, None
         
+        # Determine if we need phase data (for allpass) or magnitude data
+        is_phase_plot = self._active_filter == "allpass"
+        data_column = 2 if is_phase_plot else 1  # Column index: 0=freq, 1=mag, 2=phase
+        
         try:
             freq_list = []
-            mag_list = []
+            data_list = []
             
             with open(file_path, 'r', encoding='utf-8') as f:
                 for line in f:
@@ -579,19 +612,21 @@ class FilterTab(QWidget):
                     if not line or line.startswith('*') or line.startswith('#'):
                         continue
                     
-                    # Try to parse frequency and magnitude
+                    # Try to parse frequency and data (magnitude or phase)
                     parts = line.split()
-                    if len(parts) >= 2:
+                    # For phase, we need at least 3 columns; for magnitude, at least 2
+                    required_cols = 3 if is_phase_plot else 2
+                    if len(parts) >= required_cols:
                         try:
                             freq = float(parts[0])
-                            mag = float(parts[1])
+                            data = float(parts[data_column])
                             freq_list.append(freq)
-                            mag_list.append(mag)
-                        except ValueError:
+                            data_list.append(data)
+                        except (ValueError, IndexError):
                             continue
             
-            if freq_list and mag_list:
-                return np.array(freq_list), np.array(mag_list)
+            if freq_list and data_list:
+                return np.array(freq_list), np.array(data_list)
         except Exception:
             pass
         
@@ -711,10 +746,37 @@ class FilterTab(QWidget):
     
     def _calc_allpass_response(self, freq: np.ndarray, fs: float, f0: float, 
                                q: float, invert: bool, filterset_def: dict = None) -> np.ndarray:
-        """Calculate allpass filter response (magnitude is flat, but included for completeness)."""
-        # Allpass filters have unity magnitude response, so return 0 dB
-        # Phase is affected by invert, but we're only showing magnitude here
-        return np.zeros_like(freq)
+        """Calculate allpass filter phase response."""
+        # Apply filterset constraints if available
+        if filterset_def:
+            q_scale = filterset_def.get('q_scale', 1.0)
+            q = q * q_scale
+        
+        # Allpass filter coefficients (cookbook)
+        w0 = 2 * np.pi * f0 / fs
+        alpha = np.sin(w0) / (2 * q)
+        
+        b0 = 1 - alpha
+        b1 = -2 * np.cos(w0)
+        b2 = 1 + alpha
+        a0 = 1 + alpha
+        a1 = -2 * np.cos(w0)
+        a2 = 1 - alpha
+        
+        # Calculate frequency response
+        w = 2 * np.pi * freq / fs
+        z = np.exp(1j * w)
+        
+        H = (b0 + b1 * z**(-1) + b2 * z**(-2)) / (a0 + a1 * z**(-1) + a2 * z**(-2))
+        
+        # Extract phase in degrees
+        phase = np.angle(H) * 180 / np.pi
+        
+        # Apply invert if checked
+        if invert:
+            phase = -phase
+        
+        return phase
     
     def _calc_linkwitz_riley_response(self, freq: np.ndarray, fs: float, f0: float, 
                                       order: int, is_lowpass: bool) -> np.ndarray:
@@ -926,6 +988,146 @@ class FilterTab(QWidget):
             )
         except Exception as exc:
             QMessageBox.critical(self, "Export failed", str(exc))
+    
+    def _calibrate_filters(self) -> None:
+        """Calibrate filters based on available sweep files."""
+        from pathlib import Path
+        from eq_optimizer.manufacturer_calibration import (
+            calibrate_manufacturer_profile,
+            ReferenceSettings,
+        )
+        
+        # Get the currently selected filterset
+        item = self.filterset_list.currentItem()
+        if not item:
+            QMessageBox.warning(
+                self, "No filterset selected", 
+                "Please select a filterset before calibrating."
+            )
+            return
+        
+        filterset_name = item.data(Qt.UserRole)
+        
+        # Collect sweep file paths for each filter type
+        sweep_files = {
+            "peq": self.peq_path.text().strip(),
+            "shelf": self.shelf_path.text().strip(),
+            "allpass": self.allpass_path.text().strip(),
+        }
+        
+        # Check which sweeps are available
+        available_sweeps = {}
+        missing_filters = []
+        
+        for filter_type, path in sweep_files.items():
+            if path and Path(path).exists():
+                available_sweeps[filter_type] = path
+            else:
+                missing_filters.append(filter_type.upper())
+        
+        # If no sweeps available at all, show error
+        if not available_sweeps:
+            QMessageBox.critical(
+                self, "No sweep files",
+                "No sweep files are available. Please specify at least one sweep file before calibrating."
+            )
+            return
+        
+        # If some sweeps are missing, show warning and ask for confirmation
+        if missing_filters:
+            missing_str = ", ".join(missing_filters)
+            reply = QMessageBox.question(
+                self,
+                "Missing sweep files",
+                f"The following filter types have no sweep files:\n{missing_str}\n\n"
+                f"These filters will not be calibrated.\n\n"
+                f"Do you want to continue with the calibration of the available filters?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.No:
+                return
+        
+        # Get reference settings from current filter parameters
+        # Use actual values from all filter panels, not just the active one
+        reference = ReferenceSettings(
+            freq_hz=self.peq_freq.value(),
+            gain_db=self.peq_a.value(),
+            q=self.peq_q.value(),
+            shelf_slope=self.shelf_q.value(),
+        )
+        
+        try:
+            # Determine sweep directory (use the directory of the first available sweep)
+            first_sweep_path = Path(next(iter(available_sweeps.values())))
+            sweep_dir = first_sweep_path.parent
+            
+            # Get filenames relative to sweep directory
+            peq_file = Path(available_sweeps["peq"]).name if "peq" in available_sweeps else None
+            shelf_file = Path(available_sweeps["shelf"]).name if "shelf" in available_sweeps else None
+            allpass_file = Path(available_sweeps["allpass"]).name if "allpass" in available_sweeps else None
+            
+            # Get sample rate
+            sample_rate = self._current_sample_rate(self.sample_rate_combo)
+            
+            # Load existing filterset to preserve other settings
+            try:
+                existing_record = self.filterset_repository.get_entry(filterset_name)
+                base_filters = existing_record.filters
+            except KeyError:
+                base_filters = {}
+            
+            # Perform calibration
+            calibrated_entry = calibrate_manufacturer_profile(
+                name=filterset_name,
+                sweep_dir=sweep_dir,
+                peq_file=peq_file,
+                allpass_file=allpass_file,
+                shelf_file=shelf_file,
+                sample_rate=sample_rate,
+                lowpass_specs=None,  # Not handling lowpass for now
+                reference=reference,
+                base_filters=base_filters,
+            )
+            
+            # Update the filterset with calibrated parameters
+            from eq_optimizer.filterset_store import FiltersetRecord
+            
+            updated_record = FiltersetRecord(
+                name=filterset_name,
+                description=calibrated_entry["description"],
+                filters=calibrated_entry["filters"],
+                blocks=existing_record.blocks if "existing_record" in locals() else [],
+            )
+            
+            self.filterset_repository.save_entry(updated_record)
+            
+            # Refresh the display and re-select the filterset
+            self._refresh_filtersets()
+            
+            # Re-select the calibrated filterset
+            for row in range(self.filterset_list.count()):
+                item = self.filterset_list.item(row)
+                if item.data(Qt.UserRole) == filterset_name:
+                    self.filterset_list.setCurrentRow(row)
+                    break
+            
+            self._update_plot()
+            
+            # Show success message
+            calibrated_str = ", ".join([f.upper() for f in available_sweeps.keys()])
+            QMessageBox.information(
+                self, "Calibration successful",
+                f"Successfully calibrated filters: {calibrated_str}\n\n"
+                f"The filterset '{filterset_name}' has been updated with the calibrated parameters."
+            )
+            
+        except Exception as exc:
+            QMessageBox.critical(
+                self, "Calibration failed",
+                f"An error occurred during calibration:\n{str(exc)}"
+            )
     
     def _show_import_conflict_dialog(self, name: str, existing_filters: dict, 
                                      incoming_filters: dict) -> str:

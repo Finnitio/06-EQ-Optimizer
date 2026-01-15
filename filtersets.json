@@ -244,8 +244,26 @@
     },
     {
       "name": "Hypex Fusion Amplifier",
-      "description": "",
-      "filters": {},
+      "description": "Core sweeps: Shelf (lowshelf.txt). Reference target 3.0 dB, Q=0.707, f=1000.0 Hz.",
+      "filters": {
+        "peq": {
+          "formula": "cookbook",
+          "freq_scale": 0.999449,
+          "gain_scale": 1.000102,
+          "q_scale": 0.843767
+        },
+        "allpass": {
+          "formula": "cookbook",
+          "freq_scale": 1.000219,
+          "q_scale": 0.999016
+        },
+        "shelf": {
+          "formula": "cookbook",
+          "freq_scale": 1.089912,
+          "gain_scale": 0.999643,
+          "slope_scale": 1.414891
+        }
+      },
       "blocks": []
     }
   ]
