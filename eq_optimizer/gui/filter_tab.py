@@ -645,12 +645,15 @@ class FilterTab(QWidget):
                                           filterset_def)
         elif self._active_filter == "shelf":
             is_low_shelf = self.shelf_low.isChecked()
-            return self._calc_shelf_response(freq, sample_rate,
-                                            self.shelf_freq.value(),
-                                            self.shelf_q.value(),
-                                            self.shelf_a.value(),
-                                            is_low_shelf,
-                                            filterset_def)
+            return self._calc_shelf_response(
+                freq,
+                sample_rate,
+                self.shelf_freq.value(),
+                self.shelf_q.value(),
+                self.shelf_a.value(),
+                is_low_shelf,
+                filterset_def,
+            )
         elif self._active_filter == "allpass":
             return self._calc_allpass_response(freq, sample_rate,
                                               self.allpass_freq.value(),
@@ -707,40 +710,61 @@ class FilterTab(QWidget):
         H = (b0 + b1 * z**(-1) + b2 * z**(-2)) / (a0 + a1 * z**(-1) + a2 * z**(-2))
         return 20 * np.log10(np.abs(H))
     
-    def _calc_shelf_response(self, freq: np.ndarray, fs: float, f0: float, q: float, 
-                            gain_db: float, is_low_shelf: bool, filterset_def: dict = None) -> np.ndarray:
-        """Calculate shelving filter response."""
-        # Apply filterset constraints if available
+    def _calc_shelf_response(
+        self,
+        freq: np.ndarray,
+        fs: float,
+        f0: float,
+        slope: float,
+        gain_db: float,
+        is_low_shelf: bool,
+        filterset_def: dict | None = None,
+    ) -> np.ndarray:
+        """Calculate shelving response using the RBJ S (slope) parameter."""
+
+        slope_value = float(slope)
         if filterset_def:
-            slope_scale = filterset_def.get('slope_scale', 1.0)
-            q = q * slope_scale
-            
-            gain_limit = filterset_def.get('gain_limit_db')
+            slope_scale = float(filterset_def.get("slope_scale", 1.0))
+            slope_value *= slope_scale
+            slope_min = filterset_def.get("slope_min")
+            if slope_min is not None:
+                slope_value = max(slope_value, float(slope_min))
+            slope_max = filterset_def.get("slope_max")
+            if slope_max is not None:
+                slope_value = min(slope_value, float(slope_max))
+
+            gain_limit = filterset_def.get("gain_limit_db")
             if gain_limit is not None:
-                gain_db = max(-gain_limit, min(gain_limit, gain_db))
-        
+                limit = abs(float(gain_limit))
+                gain_db = max(-limit, min(limit, gain_db))
+
+        slope_value = max(slope_value, 1e-6)
         A = 10 ** (gain_db / 40.0)
         w0 = 2 * np.pi * f0 / fs
-        alpha = np.sin(w0) / (2 * q)
-        
+        cos_w0 = np.cos(w0)
+        sin_w0 = np.sin(w0)
+        slope_term = (A + 1.0 / A) * (1.0 / slope_value - 1.0) + 2.0
+        slope_term = max(slope_term, 0.0)
+        alpha = (sin_w0 / 2.0) * np.sqrt(slope_term)
+        beta = 2.0 * np.sqrt(A) * alpha
+
         if is_low_shelf:
-            b0 = A * ((A + 1) - (A - 1) * np.cos(w0) + 2 * np.sqrt(A) * alpha)
-            b1 = 2 * A * ((A - 1) - (A + 1) * np.cos(w0))
-            b2 = A * ((A + 1) - (A - 1) * np.cos(w0) - 2 * np.sqrt(A) * alpha)
-            a0 = (A + 1) + (A - 1) * np.cos(w0) + 2 * np.sqrt(A) * alpha
-            a1 = -2 * ((A - 1) + (A + 1) * np.cos(w0))
-            a2 = (A + 1) + (A - 1) * np.cos(w0) - 2 * np.sqrt(A) * alpha
-        else:  # high shelf
-            b0 = A * ((A + 1) + (A - 1) * np.cos(w0) + 2 * np.sqrt(A) * alpha)
-            b1 = -2 * A * ((A - 1) + (A + 1) * np.cos(w0))
-            b2 = A * ((A + 1) + (A - 1) * np.cos(w0) - 2 * np.sqrt(A) * alpha)
-            a0 = (A + 1) - (A - 1) * np.cos(w0) + 2 * np.sqrt(A) * alpha
-            a1 = 2 * ((A - 1) - (A + 1) * np.cos(w0))
-            a2 = (A + 1) - (A - 1) * np.cos(w0) - 2 * np.sqrt(A) * alpha
-        
+            b0 = A * ((A + 1) - (A - 1) * cos_w0 + beta)
+            b1 = 2 * A * ((A - 1) - (A + 1) * cos_w0)
+            b2 = A * ((A + 1) - (A - 1) * cos_w0 - beta)
+            a0 = (A + 1) + (A - 1) * cos_w0 + beta
+            a1 = -2 * ((A - 1) + (A + 1) * cos_w0)
+            a2 = (A + 1) + (A - 1) * cos_w0 - beta
+        else:
+            b0 = A * ((A + 1) + (A - 1) * cos_w0 + beta)
+            b1 = -2 * A * ((A - 1) + (A + 1) * cos_w0)
+            b2 = A * ((A + 1) + (A - 1) * cos_w0 - beta)
+            a0 = (A + 1) - (A - 1) * cos_w0 + beta
+            a1 = 2 * ((A - 1) - (A + 1) * cos_w0)
+            a2 = (A + 1) - (A - 1) * cos_w0 - beta
+
         w = 2 * np.pi * freq / fs
         z = np.exp(1j * w)
-        
         H = (b0 + b1 * z**(-1) + b2 * z**(-2)) / (a0 + a1 * z**(-1) + a2 * z**(-2))
         return 20 * np.log10(np.abs(H))
     
@@ -1014,34 +1038,86 @@ class FilterTab(QWidget):
             "shelf": self.shelf_path.text().strip(),
             "allpass": self.allpass_path.text().strip(),
         }
+        lr_path_text = self.lr_path.text().strip()
+        bw_path_text = self.bw_path.text().strip()
         
         # Check which sweeps are available
         available_sweeps = {}
         missing_filters = []
-        
+
         for filter_type, path in sweep_files.items():
             if path and Path(path).exists():
                 available_sweeps[filter_type] = path
             else:
                 missing_filters.append(filter_type.upper())
+
+        lowpass_specs: list[tuple[str, str, int, str, float]] = []
+        lowpass_paths: list[Path] = []
+        lowpass_summary: list[str] = []
+        missing_lowpass: list[str] = []
+
+        def _register_lowpass(
+            kind_key: str,
+            order_value: int,
+            is_lowpass: bool,
+            freq_value: float,
+            path_text: str,
+            prefix: str,
+        ) -> None:
+            if not path_text:
+                return
+            candidate = Path(path_text)
+            mode = "lowpass" if is_lowpass else "highpass"
+            descriptor = f"{prefix}{order_value} {'LP' if is_lowpass else 'HP'}"
+            if not candidate.exists():
+                missing_lowpass.append(descriptor)
+                return
+            lowpass_specs.append((kind_key, candidate.name, order_value, mode, freq_value))
+            lowpass_paths.append(candidate)
+            lowpass_summary.append(descriptor)
+
+        _register_lowpass(
+            "linkwitz-riley",
+            self.lr_order_group.checkedId(),
+            self.lr_lowpass.isChecked(),
+            self.lr_freq.value(),
+            lr_path_text,
+            "LR",
+        )
+        _register_lowpass(
+            "butterworth",
+            self.bw_order_group.checkedId(),
+            self.bw_lowpass.isChecked(),
+            self.bw_freq.value(),
+            bw_path_text,
+            "BW",
+        )
         
         # If no sweeps available at all, show error
-        if not available_sweeps:
+        if not available_sweeps and not lowpass_specs:
             QMessageBox.critical(
                 self, "No sweep files",
                 "No sweep files are available. Please specify at least one sweep file before calibrating."
             )
             return
         
-        # If some sweeps are missing, show warning and ask for confirmation
+        # If some sweeps are missing or invalid, show warning and ask for confirmation
+        warning_lines: list[str] = []
         if missing_filters:
-            missing_str = ", ".join(missing_filters)
+            warning_lines.append(
+                "The following filter types have no sweep files:\n" + ", ".join(missing_filters)
+            )
+        if missing_lowpass:
+            warning_lines.append(
+                "The following crossover sweeps are unavailable or invalid:\n" + ", ".join(missing_lowpass)
+            )
+
+        if warning_lines:
             reply = QMessageBox.question(
                 self,
                 "Missing sweep files",
-                f"The following filter types have no sweep files:\n{missing_str}\n\n"
-                f"These filters will not be calibrated.\n\n"
-                f"Do you want to continue with the calibration of the available filters?",
+                "\n\n".join(warning_lines)
+                + "\n\nThese filters will not be calibrated.\n\nDo you want to continue with the calibration of the available filters?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No
             )
@@ -1060,7 +1136,8 @@ class FilterTab(QWidget):
         
         try:
             # Determine sweep directory (use the directory of the first available sweep)
-            first_sweep_path = Path(next(iter(available_sweeps.values())))
+            calibration_paths = list(available_sweeps.values()) + [str(path) for path in lowpass_paths]
+            first_sweep_path = Path(calibration_paths[0])
             sweep_dir = first_sweep_path.parent
             
             # Get filenames relative to sweep directory
@@ -1086,7 +1163,7 @@ class FilterTab(QWidget):
                 allpass_file=allpass_file,
                 shelf_file=shelf_file,
                 sample_rate=sample_rate,
-                lowpass_specs=None,  # Not handling lowpass for now
+                lowpass_specs=lowpass_specs or None,
                 reference=reference,
                 base_filters=base_filters,
             )
@@ -1116,7 +1193,9 @@ class FilterTab(QWidget):
             self._update_plot()
             
             # Show success message
-            calibrated_str = ", ".join([f.upper() for f in available_sweeps.keys()])
+            calibrated_sections = [f.upper() for f in available_sweeps.keys()]
+            calibrated_sections.extend(lowpass_summary)
+            calibrated_str = ", ".join(calibrated_sections)
             QMessageBox.information(
                 self, "Calibration successful",
                 f"Successfully calibrated filters: {calibrated_str}\n\n"
