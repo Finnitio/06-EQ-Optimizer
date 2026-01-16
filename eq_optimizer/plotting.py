@@ -11,16 +11,18 @@ from .measurements import Response, compute_complex, compute_minimum_phase_angle
 from .project import Way
 
 
-def plot_ways(
+def render_way_plots(
+    ax_mag,
+    ax_phase_sum,
+    ax_phase_ways,
     ways: Sequence[Way],
     responses: Sequence[Response],
     freq_grid: np.ndarray,
-    save_path: Path | None,
-    show_plot: bool = True,
+    *,
+    figure: plt.Figure | None = None,
+    auto_layout: bool = False,
 ) -> None:
-    fig, (ax_mag, ax_phase_sum, ax_phase_ways) = plt.subplots(
-        3, 1, figsize=(12, 10), sharex=True, height_ratios=[3, 1, 1]
-    )
+    fig = figure or ax_mag.figure
     summed = np.zeros_like(freq_grid, dtype=np.complex128)
     way_magnitudes: list[np.ndarray] = []
     way_complex: list[np.ndarray] = []
@@ -44,7 +46,7 @@ def plot_ways(
     summed_db = 20.0 * np.log10(np.maximum(np.abs(summed), 1e-9))
     ax_mag.semilogx(freq_grid, summed_db, label="Sum", color="black", linewidth=2.0)
     ax_mag.set_ylabel("Magnitude [dB]")
-    ax_mag.set_title("Three-Way Magnitude Response")
+    ax_mag.set_title("Magnitude")
     ax_mag.grid(which="major", linestyle=":", linewidth=0.8, color="#666666")
     ax_mag.grid(which="minor", linestyle=":", linewidth=0.35, alpha=0.7, color="#999999")
     ax_mag.yaxis.set_major_locator(MultipleLocator(5))
@@ -65,9 +67,10 @@ def plot_ways(
 
     decades = np.log10(display_max / display_min)
     top_axis_height_in = 6.0
-    total_height = top_axis_height_in * 5.0 / 3.0  # height ratios [3,1,1]
-    fig_width = max(12.0, decades * top_axis_height_in * 25.0 / span_db)
-    fig.set_size_inches(fig_width, total_height, forward=True)
+    total_height = top_axis_height_in * 5.0 / 3.0
+    if auto_layout and fig is not None:
+        fig_width = max(12.0, decades * top_axis_height_in * 25.0 / span_db)
+        fig.set_size_inches(fig_width, total_height, forward=True)
 
     phase_min = compute_minimum_phase_angle(freq_grid, summed_db, remove_delay=True)
     phase_deg = np.degrees(phase_min)
@@ -130,6 +133,28 @@ def plot_ways(
     ax_phase_ways.xaxis.set_major_locator(locator)
     ax_phase_ways.xaxis.set_major_formatter(formatter)
 
+
+def plot_ways(
+    ways: Sequence[Way],
+    responses: Sequence[Response],
+    freq_grid: np.ndarray,
+    save_path: Path | None,
+    show_plot: bool = True,
+) -> None:
+    fig, (ax_mag, ax_phase_sum, ax_phase_ways) = plt.subplots(
+        3, 1, figsize=(12, 10), sharex=True, height_ratios=[3, 1, 1]
+    )
+    render_way_plots(
+        ax_mag,
+        ax_phase_sum,
+        ax_phase_ways,
+        ways,
+        responses,
+        freq_grid,
+        figure=fig,
+        auto_layout=True,
+    )
+
     fig.tight_layout()
 
     if save_path is not None:
@@ -140,7 +165,7 @@ def plot_ways(
     if show_plot:
         plt.show()
     else:
-        plt.close()
+        plt.close(fig)
 
 
 def plot_sum_vs_reference(

@@ -19,7 +19,14 @@ class FilterBlock:
         if "type" not in data:
             raise ValueError("Filter definition must contain a 'type' field")
         kind = str(data["type"]).lower()
-        params = {k: v for k, v in data.items() if k != "type"}
+        params: dict[str, Any] = {}
+        for key, value in data.items():
+            if key == "type":
+                continue
+            if key == "params" and isinstance(value, dict):
+                params.update(value)
+            else:
+                params[key] = value
         return cls(kind=kind, params=params)
 
 

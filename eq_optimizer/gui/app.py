@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 from eq_optimizer.filterset_store import FiltersetRecord, FiltersetRepository
 from eq_optimizer.project_store import ProjectRecord, ProjectRepository
 from .filter_tab import FilterTab
+from .system_tab import SystemTab
 
 
 class MainWindow(QMainWindow):
@@ -44,9 +45,12 @@ class MainWindow(QMainWindow):
         self._project_tab = ProjectTab(project_repo, filterset_repo)
         self._tabs.addTab(self._project_tab, "Project")
         self._filter_tab = FilterTab(project_repo, filterset_repo)
+        self._system_tab = SystemTab(project_repo, filterset_repo)
         self._project_tab.projectSelected.connect(self._filter_tab.set_active_project)
+        self._project_tab.projectSelected.connect(self._system_tab.set_active_project)
         self._project_tab.publish_selection()
         self._tabs.addTab(self._filter_tab, "Filtersets")
+        self._tabs.addTab(self._system_tab, "System")
         self.setCentralWidget(self._tabs)
 
 
