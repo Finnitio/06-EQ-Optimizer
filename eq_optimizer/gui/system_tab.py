@@ -6,7 +6,17 @@ from typing import Any, Optional
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from PySide6.QtCore import Qt
+import numpy as np
+
+try:
+    import pyqtgraph as pg
+except Exception:  # pragma: no cover - optional dependency
+    pg = None
+else:
+    pg.setConfigOption("background", "w")
+    pg.setConfigOption("foreground", "k")
+    pg.setConfigOption("antialias", True)
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -34,9 +44,13 @@ from PySide6.QtWidgets import (
 from eq_optimizer.filters import FilterBlock
 from eq_optimizer.manufacturers import ManufacturerProfile
 from eq_optimizer.plotting import render_way_plots
+from eq_optimizer.measurements import compute_complex, compute_minimum_phase_angle
 from eq_optimizer.project import Project, normalize_color
 from eq_optimizer.project_store import ProjectRepository
 from eq_optimizer.filterset_store import FiltersetRepository
+
+
+USE_PYQTGRAPH = True
 
 
 class SystemTab(QWidget):
@@ -51,6 +65,16 @@ class SystemTab(QWidget):
         self._filterset_repo = filterset_repository
         self._current_record = None
         self._current_payload: dict[str, Any] | None = None
+        self._plot_timer = QTimer(self)
+        self._plot_timer.setSingleShot(True)
+        self._plot_timer.setInterval(120)
+        self._plot_timer.timeout.connect(self._draw_plot_now)
+        self._plot_points = 800
+        self._plot_artists: dict[str, Any] = {}
+        self._plot_way_count: int | None = None
+        self._x_limits: tuple[float, float] | None = None
+        self._use_pyqtgraph = bool(pg) and USE_PYQTGRAPH
+        self._pg_curves: dict[str, Any] = {}
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -162,12 +186,51 @@ class SystemTab(QWidget):
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(8, 0, 0, 0)
 
-        self.figure = Figure(figsize=(7, 5))
-        self.ax_mag, self.ax_phase_sum, self.ax_phase_ways = self.figure.subplots(
-            3, 1, sharex=True, height_ratios=[3, 1, 1]
-        )
-        self.canvas = FigureCanvas(self.figure)
-        right_layout.addWidget(self.canvas)
+        if self._use_pyqtgraph:
+            self.pg_widget = pg.GraphicsLayoutWidget()
+            self.pg_mag = self.pg_widget.addPlot(row=0, col=0)
+            self.pg_phase_sum = self.pg_widget.addPlot(row=1, col=0)
+            self.pg_phase_ways = self.pg_widget.addPlot(row=2, col=0)
+            
+            # Grid lines for all key frequencies; labels only on major ticks
+            tick_freqs = [
+                20, 30, 40, 50, 60, 70, 80, 90,
+                100, 200, 300, 400, 500, 600, 700, 800, 900,
+                1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000,
+                10000, 20000
+            ]
+            label_map = {
+                20: "20 Hz",
+                100: "100 Hz",
+                1000: "1 kHz",
+                10000: "10 kHz",
+                20000: "20 kHz",
+            }
+            all_ticks = [(np.log10(f), label_map.get(f, "")) for f in tick_freqs]
+            
+            for plot in (self.pg_mag, self.pg_phase_sum, self.pg_phase_ways):
+                plot.setLogMode(x=True, y=False)
+                plot.showGrid(x=True, y=True, alpha=0.2)
+                # Slightly expand limits to ensure edge labels render
+                plot.setLimits(xMin=np.log10(15.0), xMax=np.log10(25000.0))
+                plot.setXRange(np.log10(20.0), np.log10(20000.0), padding=0.05)
+                plot.getAxis('bottom').setTicks([all_ticks])
+            
+            self.pg_mag.setLabel("left", "Magnitude [dB]")
+            self.pg_phase_sum.setLabel("left", "Phase [deg]")
+            self.pg_phase_ways.setLabel("left", "Phase [deg]")
+            self.pg_phase_ways.setLabel("bottom", "Frequency")
+            right_layout.addWidget(self.pg_widget)
+        else:
+            self.figure = Figure(figsize=(7, 5))
+            self.figure.set_facecolor("white")
+            self.ax_mag, self.ax_phase_sum, self.ax_phase_ways = self.figure.subplots(
+                3, 1, sharex=True, height_ratios=[3, 1, 1]
+            )
+            for ax in (self.ax_mag, self.ax_phase_sum, self.ax_phase_ways):
+                ax.set_facecolor("white")
+            self.canvas = FigureCanvas(self.figure)
+            right_layout.addWidget(self.canvas)
         splitter.addWidget(right_panel)
 
         splitter.setStretchFactor(0, 2)
@@ -180,7 +243,7 @@ class SystemTab(QWidget):
         self._current_payload = payload if payload is not None else None
         self._populate_filterset_combo()
         self._refresh_lists()
-        self._draw_plot()
+        self._schedule_plot()
 
     def _refresh_lists(self) -> None:
         self.ways_list.clear()
@@ -217,7 +280,7 @@ class SystemTab(QWidget):
         if selected:
             self._current_payload["filterset"] = selected
             self._persist_project()
-            self._draw_plot()
+            self._schedule_plot()
 
     def _sync_blocks_list(self) -> None:
         self.blocks_list.clear()
@@ -298,7 +361,7 @@ class SystemTab(QWidget):
                     way_entry[key] = widget.isChecked()
         
         self._persist_project()
-        self._draw_plot()
+        self._schedule_plot()
     
     def _update_filter_params(self) -> None:
         # Clear existing parameter widgets
@@ -408,7 +471,7 @@ class SystemTab(QWidget):
         self.blocks_list.setCurrentRow(block_idx)
         
         self._persist_project()
-        self._draw_plot()
+        self._schedule_plot()
 
     # ------------------------------------------------------------------
     def _selected_way_index(self) -> Optional[int]:
@@ -454,7 +517,7 @@ class SystemTab(QWidget):
         )
         self._persist_project()
         self._refresh_lists()
-        self._draw_plot()
+        self._schedule_plot()
 
     def _remove_way(self) -> None:
         idx = self._selected_way_index()
@@ -466,7 +529,7 @@ class SystemTab(QWidget):
         del ways[idx]
         self._persist_project()
         self._refresh_lists()
-        self._draw_plot()
+        self._schedule_plot()
 
     def _add_filter_block(self) -> None:
         if not self._current_payload:
@@ -484,7 +547,7 @@ class SystemTab(QWidget):
         ways[idx].setdefault("filters", []).append(block)
         self._persist_project()
         self._sync_blocks_list()
-        self._draw_plot()
+        self._schedule_plot()
 
     def _remove_filter_block(self) -> None:
         idx = self._selected_way_index()
@@ -499,7 +562,7 @@ class SystemTab(QWidget):
             del filters[block_idx]
             self._persist_project()
             self._sync_blocks_list()
-            self._draw_plot()
+            self._schedule_plot()
 
     def _apply_way_path_edit(self) -> None:
         if not self._current_payload:
@@ -512,7 +575,7 @@ class SystemTab(QWidget):
             return
         entry["file"] = new_path
         self._persist_project()
-        self._draw_plot()
+        self._schedule_plot()
 
     def _browse_way_file(self) -> None:
         entry = self._selected_way_entry()
@@ -558,23 +621,48 @@ class SystemTab(QWidget):
         updated = self._project_repo.update_project_payload(self._current_record.id, self._current_payload)
         self._current_record = updated
 
-    def _draw_plot(self) -> None:
-        for ax in (self.ax_mag, self.ax_phase_sum, self.ax_phase_ways):
-            ax.clear()
+    def _schedule_plot(self) -> None:
+        if self._plot_timer.isActive():
+            self._plot_timer.stop()
+        self._plot_timer.start()
 
+    def _draw_plot_now(self) -> None:
         if not self._current_payload or not self._current_payload.get("ways"):
-            self.ax_mag.text(0.5, 0.5, "Keine Wege verfügbar", ha="center", va="center")
-            self.canvas.draw_idle()
+            if self._use_pyqtgraph:
+                for plot in (self.pg_mag, self.pg_phase_sum, self.pg_phase_ways):
+                    plot.clear()
+            else:
+                for ax in (self.ax_mag, self.ax_phase_sum, self.ax_phase_ways):
+                    ax.clear()
+                self.ax_mag.text(0.5, 0.5, "Keine Wege verfügbar", ha="center", va="center")
+                self.canvas.draw_idle()
             return
 
         try:
             project = self._build_project_model()
-            responses, freq_grid = project.resampled_responses(points=1600)
+            responses, freq_grid = project.resampled_responses(points=self._plot_points)
         except Exception as exc:
-            self.ax_mag.text(0.5, 0.5, f"Plotfehler: {exc}", ha="center", va="center")
+            if self._use_pyqtgraph:
+                for plot in (self.pg_mag, self.pg_phase_sum, self.pg_phase_ways):
+                    plot.clear()
+            else:
+                for ax in (self.ax_mag, self.ax_phase_sum, self.ax_phase_ways):
+                    ax.clear()
+                self.ax_mag.text(0.5, 0.5, f"Plotfehler: {exc}", ha="center", va="center")
+                self.canvas.draw_idle()
+            return
+
+        if self._use_pyqtgraph:
+            self._draw_plot_pyqtgraph(project, responses, freq_grid)
+            return
+
+        if self._plot_way_count == len(project.ways) and self._plot_artists:
+            self._update_plot_artists(project, responses, freq_grid)
             self.canvas.draw_idle()
             return
 
+        for ax in (self.ax_mag, self.ax_phase_sum, self.ax_phase_ways):
+            ax.clear()
         render_way_plots(
             self.ax_mag,
             self.ax_phase_sum,
@@ -585,7 +673,145 @@ class SystemTab(QWidget):
             figure=self.figure,
         )
         self.figure.tight_layout()
+        self._capture_plot_artists(project)
+        self._x_limits = (float(freq_grid.min()), float(freq_grid.max()))
         self.canvas.draw_idle()
+
+    def _capture_plot_artists(self, project: Project) -> None:
+        self._plot_way_count = len(project.ways)
+        mag_lines = list(self.ax_mag.lines)
+        phase_sum_lines = list(self.ax_phase_sum.lines)
+        phase_way_lines = list(self.ax_phase_ways.lines)
+        if len(mag_lines) < self._plot_way_count + 1:
+            self._plot_artists = {}
+            return
+        self._plot_artists = {
+            "mag_lines": mag_lines[: self._plot_way_count],
+            "sum_line": mag_lines[self._plot_way_count],
+            "phase_sum": phase_sum_lines[0] if phase_sum_lines else None,
+            "phase_way_lines": phase_way_lines,
+        }
+
+    def _update_plot_artists(self, project: Project, responses, freq_grid) -> None:
+        artists = self._plot_artists
+        if not artists:
+            return
+
+        self._update_x_limits(freq_grid)
+
+        summed = np.zeros_like(freq_grid, dtype=np.complex128)
+        way_complex: list[np.ndarray] = []
+
+        for line, way, resp in zip(artists["mag_lines"], project.ways, responses):
+            line.set_data(resp.frequency, resp.magnitude_db)
+            line.set_color(way.color)
+            line.set_label(way.name)
+            complex_resp = compute_complex(resp)
+            summed += complex_resp
+            way_complex.append(complex_resp)
+
+        summed_db = 20.0 * np.log10(np.maximum(np.abs(summed), 1e-9))
+        sum_line = artists.get("sum_line")
+        if sum_line is not None:
+            sum_line.set_data(freq_grid, summed_db)
+
+        phase_sum_line = artists.get("phase_sum")
+        if phase_sum_line is not None:
+            phase_min = compute_minimum_phase_angle(freq_grid, summed_db, remove_delay=True)
+            phase_deg = np.degrees(phase_min)
+            phase_wrapped = ((phase_deg + 180.0) % 360.0) - 180.0
+            phase_sum_line.set_data(freq_grid, phase_wrapped)
+
+        # Update per-way phase lines (strong/weak alternation)
+        phase_way_lines = artists.get("phase_way_lines", [])
+        if phase_way_lines:
+            summed_mag = np.maximum(np.abs(summed), 1e-9)
+            threshold = 0.10 * summed_mag
+            for idx, (complex_resp, resp, way) in enumerate(zip(way_complex, responses, project.ways)):
+                base = idx * 2
+                if base + 1 >= len(phase_way_lines):
+                    break
+                way_mag = np.abs(complex_resp)
+                mask = way_mag >= threshold
+                phase_deg_full = ((np.degrees(resp.phase_rad) + 180.0) % 360.0) - 180.0
+                strong_phase = np.where(mask, phase_deg_full, np.nan)
+                weak_phase = np.where(~mask, phase_deg_full, np.nan)
+                strong_line = phase_way_lines[base]
+                weak_line = phase_way_lines[base + 1]
+                strong_line.set_data(resp.frequency, strong_phase)
+                strong_line.set_color(way.color)
+                weak_line.set_data(resp.frequency, weak_phase)
+                weak_line.set_color(way.color)
+
+    def _draw_plot_pyqtgraph(self, project: Project, responses, freq_grid) -> None:
+        self._update_x_limits(freq_grid)
+
+        if self._plot_way_count != len(project.ways) or not self._pg_curves:
+            self.pg_mag.clear()
+            self.pg_phase_sum.clear()
+            self.pg_phase_ways.clear()
+            self._pg_curves = {
+                "mag": [],
+                "sum": None,
+                "phase_sum": None,
+                "phase_ways": [],
+            }
+            for way in project.ways:
+                pen = pg.mkPen(way.color, width=1.2)
+                self._pg_curves["mag"].append(self.pg_mag.plot(pen=pen))
+                # two phase lines per way (strong/weak)
+                self._pg_curves["phase_ways"].append(self.pg_phase_ways.plot(pen=pen))
+                weak_pen = pg.mkPen(way.color, width=0.6, style=Qt.DashLine)
+                self._pg_curves["phase_ways"].append(self.pg_phase_ways.plot(pen=weak_pen))
+            self._pg_curves["sum"] = self.pg_mag.plot(pen=pg.mkPen("black", width=2.0))
+            self._pg_curves["phase_sum"] = self.pg_phase_sum.plot(pen=pg.mkPen("black", width=1.5, style=Qt.DashLine))
+            self._plot_way_count = len(project.ways)
+
+        summed = np.zeros_like(freq_grid, dtype=np.complex128)
+        way_complex: list[np.ndarray] = []
+
+        for curve, way, resp in zip(self._pg_curves["mag"], project.ways, responses):
+            curve.setData(resp.frequency, resp.magnitude_db)
+            complex_resp = compute_complex(resp)
+            summed += complex_resp
+            way_complex.append(complex_resp)
+
+        summed_db = 20.0 * np.log10(np.maximum(np.abs(summed), 1e-9))
+        if self._pg_curves["sum"] is not None:
+            self._pg_curves["sum"].setData(freq_grid, summed_db)
+
+        if self._pg_curves["phase_sum"] is not None:
+            phase_min = compute_minimum_phase_angle(freq_grid, summed_db, remove_delay=True)
+            phase_deg = np.degrees(phase_min)
+            phase_wrapped = ((phase_deg + 180.0) % 360.0) - 180.0
+            self._pg_curves["phase_sum"].setData(freq_grid, phase_wrapped)
+
+        phase_way_lines = self._pg_curves.get("phase_ways", [])
+        if phase_way_lines:
+            summed_mag = np.maximum(np.abs(summed), 1e-9)
+            threshold = 0.10 * summed_mag
+            for idx, (complex_resp, resp) in enumerate(zip(way_complex, responses)):
+                base = idx * 2
+                if base + 1 >= len(phase_way_lines):
+                    break
+                way_mag = np.abs(complex_resp)
+                mask = way_mag >= threshold
+                phase_deg_full = ((np.degrees(resp.phase_rad) + 180.0) % 360.0) - 180.0
+                strong_phase = np.where(mask, phase_deg_full, np.nan)
+                weak_phase = np.where(~mask, phase_deg_full, np.nan)
+                phase_way_lines[base].setData(resp.frequency, strong_phase)
+                phase_way_lines[base + 1].setData(resp.frequency, weak_phase)
+
+    def _update_x_limits(self, freq_grid) -> None:
+        fixed_limits = (20.0, 20000.0)
+        if self._x_limits != fixed_limits:
+            self._x_limits = fixed_limits
+            if self._use_pyqtgraph:
+                for plot in (self.pg_mag, self.pg_phase_sum, self.pg_phase_ways):
+                    plot.setXRange(np.log10(20.0), np.log10(20000.0), padding=0.05)
+            else:
+                for ax in (self.ax_mag, self.ax_phase_sum, self.ax_phase_ways):
+                    ax.set_xlim(*fixed_limits)
 
     def _build_project_model(self) -> Project:
         payload = self._current_payload or {}
