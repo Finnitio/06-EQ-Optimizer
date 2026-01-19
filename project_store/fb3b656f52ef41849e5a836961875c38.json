@@ -11,7 +11,7 @@
         {
           "type": "peq",
           "params": {
-            "freq": 1010.0,
+            "freq": 1000.0,
             "q": 0.707,
             "gain_db": 3.0,
             "enabled": true
